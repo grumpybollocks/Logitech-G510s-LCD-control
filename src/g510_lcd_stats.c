@@ -1597,7 +1597,7 @@ int main(int argc, char **argv) {
     if (argc >= 3 && strcmp(argv[1], "--preview") == 0) {
         int screen = atoi(argv[2]);
         const char *outpath = argc >= 4 ? argv[3] : "/tmp/g510_preview.ppm";
-        g15canvas canvas;
+        g15canvas canvas G15_CANVAS_AUTO;
         g15r_initCanvas(&canvas);
         update_net_speed();
         update_media_info();
