@@ -23,7 +23,33 @@ cd Logitech-G510s-LCD-control
 already installed vs. what it's about to add — never a silent
 black-box `pacman` run), builds the LCD driver, converts the label
 font, wires up the systemd services, and adds desktop shortcuts. Safe
-to re-run any time.
+to re-run any time. You'll be asked for your `sudo` password once (for
+the udev rules and package installs), and to unplug/replug the
+keyboard partway through so those rules actually take effect.
+
+Everything it installs, and why:
+
+| Package | What it's for |
+| --- | --- |
+| `python-pyqt5`, `python-pillow`, `python-evdev` | the GUI, image import, keyboard-event reading |
+| `ydotool` | macro keystroke replay — ships its own `uinput` udev rule and `ydotool.service` |
+| `freetype2` | renders the LCD's custom label font |
+| `zenity` | the little "restarted" confirmation popup from the Start shortcut |
+| `playerctl` | reads now-playing song/artist/elapsed time for the media sensors |
+| `libg15`, `libg15render` (AUR, via `yay`/`paru`) | the actual LCD pixel-format library this whole project is built on |
+
+An AUR helper (`yay` or `paru`) is the one thing `install.sh` can't
+install for you — grab one first if you don't already have one, then
+run `install.sh`.
+
+**Verifying it worked:**
+
+```
+systemctl --user status g510-lcd-stats.service g510-lcd-buttons.service g510-macro-daemon.service
+```
+
+All three should say `active (running)`. If the LCD doesn't light up
+straight away, unplug and replug the keyboard once.
 
 **What you get:**
 - Live CPU / RAM / VRAM / TEMP stats on the built-in LCD

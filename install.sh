@@ -13,7 +13,7 @@ cd "$DIR"
 echo "=== 1/7: Official repo packages ==="
 # Real per-package [ok]/[missing] reporting -- never a silent pacman
 # black box. Only actually-missing packages get installed.
-PACMAN_PKGS=(yad python-pyqt5 python-pillow ydotool python-evdev freetype2 zenity playerctl)
+PACMAN_PKGS=(python-pyqt5 python-pillow ydotool python-evdev freetype2 zenity playerctl)
 MISSING_PACMAN_PKGS=()
 for pkg in "${PACMAN_PKGS[@]}"; do
     if pacman -Qi "$pkg" &>/dev/null; then
