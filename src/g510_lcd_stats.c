@@ -1419,6 +1419,10 @@ static void draw_text_element(g15canvas *c, text_t *tx) {
    a persistent parec capture of the PipeWire monitor source -- see
    that file for why this is player-agnostic (works with Brave,
    Spotify, anything) by construction. */
+/* Minimum vertical segment count draw_visualizer_element() guarantees
+   for a short element -- see the real bug this fixes in that
+   function's own comment. */
+#define VIZ_MIN_SEGMENTS 8
 static void draw_visualizer_element(g15canvas *c, visualizer_t *vz) {
     /* Bar/segment size are FIXED constants -- dragging the element
        bigger adds MORE bars/segments at this same fixed size, rather
@@ -1442,6 +1446,30 @@ static void draw_visualizer_element(g15canvas *c, visualizer_t *vz) {
     if (num_bars > VIZ_NUM_BARS) num_bars = VIZ_NUM_BARS;
     if (num_bars < 1) num_bars = 1;
     int num_segments = vz->height / (seg_h + seg_gap);
+
+    /* Real bug found from direct comparison across two differently-
+       sized visualizers on the same live config: "on L2 where i made
+       it pretty tall, it looks brilliant... [L5] just rises half of
+       it most of the time, too many lines at once, it was once not
+       sensible enough now its too sensitive." L2 (height=39) gets 13
+       segments at this fixed 3px/segment spacing; L5 (height=13) only
+       gets 4 -- with just 4 discrete levels, VIZ_SCALE's calibrated
+       output (tuned to look right on L2's fine 13-level gradient)
+       quantizes into big, jumpy steps that read as "too sensitive"
+       and "half-full" (landing on 2/4 constantly), not an actual
+       sensitivity problem. Fix: guarantee at least MIN_SEGMENTS by
+       shrinking seg_h/seg_gap for short elements only -- tall ones
+       (already >= the minimum, like L2) are completely unaffected,
+       so this doesn't touch the config that's already confirmed
+       looking right. */
+    if (num_segments < VIZ_MIN_SEGMENTS) {
+        int spacing = vz->height / VIZ_MIN_SEGMENTS;
+        if (spacing < 1) spacing = 1;
+        seg_gap = (spacing >= 2) ? 1 : 0;
+        seg_h = spacing - seg_gap;
+        if (seg_h < 1) seg_h = 1;
+        num_segments = vz->height / (seg_h + seg_gap);
+    }
     if (num_segments < 1) num_segments = 1;
     int y2 = vz->y + vz->height - 1;
 
