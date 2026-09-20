@@ -1,0 +1,7 @@
+SUBSYSTEM=="hidraw", ENV{ID_VENDOR_ID}=="046d", ENV{ID_MODEL_ID}=="c22e", ENV{ID_USB_INTERFACE_NUM}=="01", MODE="0660", GROUP="input", SYMLINK+="g510-lcd"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Logitech Gaming Keyboard Gaming Keys", SYMLINK+="g510-keys"
+ACTION=="add", SUBSYSTEM=="leds", KERNEL=="g15::kbd_backlight", RUN+="/bin/chgrp input /sys/class/leds/g15::kbd_backlight/brightness /sys/class/leds/g15::kbd_backlight/multi_intensity", RUN+="/bin/chmod 664 /sys/class/leds/g15::kbd_backlight/brightness /sys/class/leds/g15::kbd_backlight/multi_intensity", RUN+="/usr/lib/g510-lcd/restore-backlight.sh"
+ACTION=="add", SUBSYSTEM=="leds", KERNEL=="g15::macro_preset1", RUN+="/bin/chgrp input /sys/class/leds/g15::macro_preset1/brightness", RUN+="/bin/chmod 664 /sys/class/leds/g15::macro_preset1/brightness"
+ACTION=="add", SUBSYSTEM=="leds", KERNEL=="g15::macro_preset2", RUN+="/bin/chgrp input /sys/class/leds/g15::macro_preset2/brightness", RUN+="/bin/chmod 664 /sys/class/leds/g15::macro_preset2/brightness"
+ACTION=="add", SUBSYSTEM=="leds", KERNEL=="g15::macro_preset3", RUN+="/bin/chgrp input /sys/class/leds/g15::macro_preset3/brightness", RUN+="/bin/chmod 664 /sys/class/leds/g15::macro_preset3/brightness"
+ACTION=="add", SUBSYSTEM=="leds", KERNEL=="g15::macro_record", RUN+="/bin/chgrp input /sys/class/leds/g15::macro_record/brightness", RUN+="/bin/chmod 664 /sys/class/leds/g15::macro_record/brightness"

@@ -1,0 +1,11 @@
+[Unit]
+Description=G510s LCD stats screen (CPU/RAM/VRAM/TEMP)
+After=default.target
+
+[Service]
+ExecStart=__PROJECT_DIR__/src/g510_lcd_stats
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

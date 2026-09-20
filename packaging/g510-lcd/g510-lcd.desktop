@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=G510 LCD Control
+Comment=LCD stats, Custom Screens, backlight, and G-key macros for the Logitech G510s
+Exec=g510-lcd
+Icon=preferences-desktop-color
+Terminal=false
+Categories=Utility;

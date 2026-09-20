@@ -1,0 +1,11 @@
+[Unit]
+Description=G510s LCD-menu buttons (L1-L5) listener
+After=default.target
+
+[Service]
+ExecStart=__PROJECT_DIR__/src/g510_lcd_buttons
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
