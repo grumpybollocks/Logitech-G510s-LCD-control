@@ -1139,7 +1139,12 @@ PREVIEW_SCALE = 4
 # 8-element-max, 160x43 screen.
 ELEMENT_HIT_W = 50
 ELEMENT_HIT_H = 10
-RESIZE_HANDLE_PX = 5   # half-size of the little resize square, in LCD px
+# Direct report: "the handle is always too small, or i cant find it"
+# -- was 5 (a 40x40 screen-px target at PREVIEW_SCALE=4), bumped up
+# for a meaningfully bigger, easier-to-land-on square, both visually
+# (easier to spot once hovering reveals it) and for the actual click
+# hit-test (same rect drives both).
+RESIZE_HANDLE_PX = 8   # half-size of the little resize square, in LCD px
 MIN_BAR_WIDTH = 10
 MAX_BAR_WIDTH = 140
 MIN_IMAGE_SIZE = 4     # smallest an image can be dragged down to, in LCD px
@@ -2006,6 +2011,20 @@ class CustomScreensTab(QWidget):
         self.refresh_elements_list()
         self.refresh_preview()
 
+    def on_reset_position(self, index):
+        # Direct request: "add a 'reset position' button for elements,
+        # in case i lose them off screen too" -- always snaps back to
+        # the visible top-left corner (0,0), regardless of element
+        # kind or how it ended up off-screen (a hand-edited
+        # custom_screens.txt, a stale migrated position, etc.) --
+        # simpler and more predictable than trying to guess "where it
+        # should go back to".
+        el = self.config[self.current_screen][index]
+        el["x"], el["y"] = 0, 0
+        save_custom_screens(self.config)
+        self.refresh_elements_list()
+        self.refresh_preview()
+
     def on_fix_overflow(self):
         # Same size estimate refresh_elements_list uses to decide
         # whether to show this button -- clamps each offending element
@@ -2203,7 +2222,7 @@ class CustomScreensTab(QWidget):
             # panel and the remove button is always reachable. Full text
             # stays in the tooltip.
             has_size_btn = el.get("kind") in ("sensor", "text")
-            reserved = 24 + 20 + (56 if has_size_btn else 0)  # remove_btn + panel margins/spacing + size_btn if present
+            reserved = 24 + 24 + 20 + (56 if has_size_btn else 0)  # remove_btn + reset_btn + panel margins/spacing + size_btn if present
             elide_budget = max(20, CUSTOM_SCREENS_PANEL_WIDTH - reserved)
             full_text = text.text()
             text.setText(QFontMetrics(text.font()).elidedText(full_text, Qt.ElideRight, elide_budget))
@@ -2226,6 +2245,17 @@ class CustomScreensTab(QWidget):
                 size_btn.setToolTip("Click to cycle text size: Small -> Medium -> Large -> Huge")
                 size_btn.clicked.connect(lambda _, idx=i: self.on_cycle_font_size(idx))
                 row.addWidget(size_btn)
+            # Direct request: "add a 'reset position' button for
+            # elements, in case i lose them off screen too" -- snaps
+            # x/y back to the visible top-left corner regardless of
+            # element kind, so a dragged-off-screen element is always
+            # recoverable without having to guess at coordinates.
+            reset_btn = QPushButton("⌂")
+            reset_btn.setFixedWidth(24)
+            reset_btn.setStyleSheet("padding: 1px;")
+            reset_btn.setToolTip("Reset position to top-left (use if you've dragged this off-screen)")
+            reset_btn.clicked.connect(lambda _, idx=i: self.on_reset_position(idx))
+            row.addWidget(reset_btn)
             remove_btn = QPushButton("✕")
             remove_btn.setFixedWidth(24)
             remove_btn.setStyleSheet("padding: 1px;")
