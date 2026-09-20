@@ -1,0 +1,12 @@
+[Unit]
+Description=G510s G-key macro daemon (G1-G18 + M1/M2/M3 profile switching)
+After=default.target ydotool.service
+Requires=ydotool.service
+
+[Service]
+ExecStart=/usr/bin/python3 __PROJECT_DIR__/src/g510_macro_daemon.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

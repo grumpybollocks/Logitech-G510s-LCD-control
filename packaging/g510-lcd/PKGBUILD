@@ -1,0 +1,94 @@
+# Maintainer: grumpybollocks
+pkgname=g510-lcd
+pkgver=1.1
+pkgrel=1
+pkgdesc="LCD stats screen, custom dashboards, backlight, and G-key macros for the Logitech G510s Gaming Keyboard"
+arch=('any')
+url="https://github.com/grumpybollocks/Logitech-G510s-LCD-control"
+license=('MIT')
+depends=('python' 'python-pyqt5' 'python-pillow' 'python-evdev' 'ydotool' 'freetype2' 'libg15render')
+makedepends=('pkgconf')
+# The source repo is private while the app is being finished, and this
+# exact tag doesn't exist yet either -- v1.1 is built but deliberately
+# not tagged until physically confirmed on the real keyboard (see
+# G510_README.md's own stated rule). This source= line is what a real
+# release would point at once both of those are true; local testing
+# tonight instead used a tarball built from `git archive` of the
+# current g510s-dev branch HEAD, documented in README.md alongside
+# everything else actually verified this pass.
+source=("$pkgname-$pkgver.tar.gz::https://github.com/grumpybollocks/Logitech-G510s-LCD-control/archive/refs/tags/g510s-v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cd "$srcdir/Logitech-G510s-LCD-control-g510s-v$pkgver"
+
+  # Same FreeType/TTF flags libg15render.so itself was built with --
+  # without them, g15canvas's struct layout mismatches between this
+  # program and the library and corrupts stack memory (bit us once
+  # already, see G510_README.md's v1.1 bug notes). -DPROJECT_DIR bakes
+  # in this package's own fixed /usr/lib/g510-lcd -- known and fixed
+  # at build time, no per-install discovery needed the way a git-clone
+  # install (install.sh) has to do it.
+  gcc $(pkg-config --cflags freetype2) -DPROJECT_DIR='"/usr/lib/g510-lcd"' \
+    src/g510_lcd_stats.c -o src/g510_lcd_stats \
+    -lg15render $(pkg-config --libs freetype2) -lm
+  gcc src/g510_lcd_buttons.c -o src/g510_lcd_buttons
+}
+
+package() {
+  cd "$srcdir/Logitech-G510s-LCD-control-g510s-v$pkgver"
+
+  # Deliberately keeps the same src/ subdirectory shape as the git-clone
+  # layout (unlike the G910 package's flat /usr/lib/g910-control/*.py),
+  # NOT for style reasons -- g510_app.py computes its own PROJECT_DIR as
+  # Path(__file__).resolve().parent.parent, and several of its own path
+  # constants (STATS_BINARY, DEFAULTS_SCRIPT, the png-to-lcd.py call)
+  # are built as PROJECT_DIR / "src" / ... or PROJECT_DIR / "scripts" /
+  # .... Flattening the layout the way G910's package does would silently
+  # break every one of those (PROJECT_DIR would resolve one directory too
+  # high) without a real source change this pass didn't need to make.
+  # Preserving the checkout shape under a fixed root means zero Python
+  # changes were needed to make packaging correct -- already covered by
+  # tonight's regression suite against the real (git-clone-shaped)
+  # layout, not a new, untested code path.
+  install -Dm755 src/g510_app.py "$pkgdir/usr/lib/$pkgname/src/g510_app.py"
+  install -Dm755 src/g510_canvas.py "$pkgdir/usr/lib/$pkgname/src/g510_canvas.py"
+  install -Dm755 src/g510_macro_daemon.py "$pkgdir/usr/lib/$pkgname/src/g510_macro_daemon.py"
+  install -Dm755 src/png-to-lcd.py "$pkgdir/usr/lib/$pkgname/src/png-to-lcd.py"
+  install -Dm755 src/g510_lcd_stats "$pkgdir/usr/lib/$pkgname/src/g510_lcd_stats"
+  install -Dm755 src/g510_lcd_buttons "$pkgdir/usr/lib/$pkgname/src/g510_lcd_buttons"
+
+  install -Dm755 /dev/stdin "$pkgdir/usr/bin/$pkgname" <<EOF
+#!/bin/sh
+exec /usr/bin/python3 /usr/lib/$pkgname/src/g510_app.py "\$@"
+EOF
+
+  # __PROJECT_DIR__/src/... -> the fixed package path, keeping the same
+  # /src segment this package's own layout still has (see the layout
+  # note above) -- no dangling-path bug to fix here the way G910's
+  # flat layout hit, since this package never flattened it away.
+  for svc in g510-lcd-stats g510-lcd-buttons g510-macro-daemon; do
+    install -Dm644 /dev/stdin "$pkgdir/usr/lib/systemd/user/$svc.service" < \
+      <(sed "s|__PROJECT_DIR__|/usr/lib/$pkgname|g" "services/$svc.service")
+  done
+
+  # Installed unmodified -- the rule's one line that used to need a
+  # __PROJECT_DIR__ substitution (backlight-restore-on-hotplug) now
+  # calls a fixed-location wrapper instead (see restore-backlight.sh
+  # below), so there's nothing left to strip or substitute here.
+  install -Dm644 udev/99-g510-lcd.rules "$pkgdir/usr/lib/udev/rules.d/99-g510-lcd.rules"
+
+  # udev fires as root with no per-user $HOME to resolve -- this
+  # wrapper finds whoever actually has the active seat0 session via
+  # loginctl at hotplug time instead, then execs THEIR own saved
+  # ~/.local/share/g510-lcd/set-backlight-color.sh. Zero PROJECT_DIR
+  # dependency, so it's installed at the exact same fixed path
+  # install.sh also uses -- the udev rule itself is identical either
+  # way, dev checkout or real package.
+  install -Dm755 scripts/restore-backlight.sh "$pkgdir/usr/lib/$pkgname/restore-backlight.sh"
+
+  install -Dm644 packaging/g510-lcd/g510-lcd.desktop \
+    "$pkgdir/usr/share/applications/$pkgname.desktop"
+
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
