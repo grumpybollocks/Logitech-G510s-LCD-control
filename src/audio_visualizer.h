@@ -113,11 +113,29 @@ static double g_viz_bars[VIZ_NUM_BARS] = {0};
    scientific bin placement. */
 static double g_viz_bar_freqs[VIZ_NUM_BARS];
 
+/* Direct request, and confirmed NOT a bug first: "most of the left
+   bars are up while the rest on the right are not. is this
+   intended?" -- verified with a real 3kHz test tone played through
+   the speakers that the high-frequency bins genuinely respond
+   correctly (that bin spiked 4-5x above baseline); real music just
+   naturally carries far less energy up there than in the bass/mids,
+   same reason any real hardware equalizer looks more alive on the
+   left. Direct follow-up: "do make the right side a bit more
+   sensitive so it shows up a bit more. while proportions are kept
+   the same" -- a smooth per-bin GAIN (not a normalize/flatten) so
+   each bin's own frame-to-frame ups and downs stay proportional to
+   what they really are, just uniformly amplified more the higher the
+   bin's frequency is. VIZ_TREBLE_BOOST=1.5 means the lowest bin
+   (bass) is unboosted (1.0x) and the highest bin (8kHz) gets 2.5x. */
+#define VIZ_TREBLE_BOOST 1.5
+static double g_viz_bin_gain[VIZ_NUM_BARS];
+
 static void viz_init_bar_freqs(void) {
     double lo = 100.0, hi = 8000.0;
     for (int i = 0; i < VIZ_NUM_BARS; i++) {
         double t = (double)i / (VIZ_NUM_BARS - 1);
         g_viz_bar_freqs[i] = lo * pow(hi / lo, t);
+        g_viz_bin_gain[i] = 1.0 + VIZ_TREBLE_BOOST * t;
     }
 }
 
@@ -244,7 +262,7 @@ static void update_visualizer(void) {
     if (got < sizeof(g_viz_ring)) return; /* short read -- try again next cycle */
 
     for (int i = 0; i < VIZ_NUM_BARS; i++) {
-        double mag = viz_dft_bin_magnitude(g_viz_ring, VIZ_WINDOW_SAMPLES, g_viz_bar_freqs[i]);
+        double mag = viz_dft_bin_magnitude(g_viz_ring, VIZ_WINDOW_SAMPLES, g_viz_bar_freqs[i]) * g_viz_bin_gain[i];
         /* Light smoothing (70% new / 30% old) -- responsive but not
            flickery frame to frame. */
         /* Direct request: "i wished more bard would be rising, Winamp
@@ -284,7 +302,7 @@ static void viz_set_preview_placeholder(void) {
             fclose(f);
             if (got == sizeof(g_viz_ring)) {
                 for (int i = 0; i < VIZ_NUM_BARS; i++) {
-                    g_viz_bars[i] = viz_dft_bin_magnitude(g_viz_ring, VIZ_WINDOW_SAMPLES, g_viz_bar_freqs[i]);
+                    g_viz_bars[i] = viz_dft_bin_magnitude(g_viz_ring, VIZ_WINDOW_SAMPLES, g_viz_bar_freqs[i]) * g_viz_bin_gain[i];
                 }
                 return;
             }
