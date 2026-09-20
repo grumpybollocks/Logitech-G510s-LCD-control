@@ -136,9 +136,23 @@ static double g_viz_bar_freqs[VIZ_NUM_BARS];
    the same" -- a smooth per-bin GAIN (not a normalize/flatten) so
    each bin's own frame-to-frame ups and downs stay proportional to
    what they really are, just uniformly amplified more the higher the
-   bin's frequency is. VIZ_TREBLE_BOOST=1.5 means the lowest bin
-   (bass) is unboosted (1.0x) and the highest bin (8kHz) gets 2.5x. */
-#define VIZ_TREBLE_BOOST 1.5
+   bin's frequency is.
+
+   Then, even after VIZ_SCALE itself was pulled back (see its own
+   comment): "still kinda maxes out too fast" -- honest tradeoff
+   flagged directly before this change: a single fixed VIZ_SCALE
+   can't make both "loud bass-heavy songs don't max out" AND "quiet
+   songs still show life" fully true at once (that needs real
+   adaptive/auto-gain, a bigger change). What a fixed-curve change
+   CAN do cheaply: also trim the BASS end down a little (not just
+   boost treble up), same linear-in-t gain curve extended to run from
+   VIZ_BASS_TRIM (<1x) at the lowest bin through 1.0x at low-mid up to
+   VIZ_TREBLE_BOOST_MAX (>1x) at the highest bin, instead of starting
+   flat at 1.0x. Proportions within each bin are still preserved
+   (still a fixed multiplier per bin, not a normalize), just the
+   overall left/right balance is shifted a bit further. */
+#define VIZ_BASS_TRIM 0.8
+#define VIZ_TREBLE_BOOST_MAX 2.5
 static double g_viz_bin_gain[VIZ_NUM_BARS];
 
 static void viz_init_bar_freqs(void) {
@@ -146,7 +160,7 @@ static void viz_init_bar_freqs(void) {
     for (int i = 0; i < VIZ_NUM_BARS; i++) {
         double t = (double)i / (VIZ_NUM_BARS - 1);
         g_viz_bar_freqs[i] = lo * pow(hi / lo, t);
-        g_viz_bin_gain[i] = 1.0 + VIZ_TREBLE_BOOST * t;
+        g_viz_bin_gain[i] = VIZ_BASS_TRIM + (VIZ_TREBLE_BOOST_MAX - VIZ_BASS_TRIM) * t;
     }
 }
 
