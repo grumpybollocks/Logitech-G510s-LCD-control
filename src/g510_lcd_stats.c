@@ -1435,13 +1435,15 @@ static void draw_visualizer_element(g15canvas *c, visualizer_t *vz) {
        show more real detail.
 
        bar_w doubled 2->4 per direct request ("a bit more wide, maybe
-       make every single line, a double line") -- each bar/baseline
-       segment reads as visibly bolder/thicker now, not just thin
-       hairlines. seg_h left at 2 (unchanged) since "wide"/"double
-       line" was about the bars' horizontal thickness, not vertical
-       segment resolution -- that was a separate, already-addressed
-       complaint ("more lines to match more frequencies"). */
-    int bar_w = 4, bar_gap = 1, seg_h = 2, seg_gap = 1;
+       make every single line, a double line"), then pulled back to 3
+       per a later direct request ("make the lines a bit thinner, 1px
+       maybe thinner, they look too big compared to the small text")
+       -- still bolder than the original 2px hairlines, just not as
+       heavy as 4px next to small label text. seg_h left at 2
+       (unchanged) since bar width/thickness is a horizontal-only
+       concern, not vertical segment resolution (see VIZ_MIN_SEGMENTS
+       above for that separate fix). */
+    int bar_w = 3, bar_gap = 1, seg_h = 2, seg_gap = 1;
     int num_bars = vz->width / (bar_w + bar_gap);
     if (num_bars > VIZ_NUM_BARS) num_bars = VIZ_NUM_BARS;
     if (num_bars < 1) num_bars = 1;
