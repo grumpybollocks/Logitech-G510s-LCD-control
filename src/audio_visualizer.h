@@ -87,8 +87,19 @@
    too flat or too pinned-at-max, that's this same real tradeoff, not
    a new bug -- an adaptive/auto-gain scale (tracking a rolling
    loudness average instead of one fixed constant) would fix it
-   properly but is a bigger change than this pass covers. */
-#define VIZ_SCALE 25.0
+   properly but is a bigger change than this pass covers.
+
+   Direct follow-up after the treble-boost pass above: "add a tiny
+   bit of reduction on them so they dont max out so fast" -- measured
+   directly against real, currently-playing music: several bins were
+   routinely hitting 2-4x the clamp threshold during normal (not even
+   especially loud) passages, confirmed via a standalone harness
+   printing g_viz_bars[]*VIZ_SCALE*100 every ~300ms. Pulled back
+   25.0 -> 21.0 (~16%, a real "tiny bit" against that measured
+   overshoot, not a full rebalance) -- verified via --preview against
+   the same live audio that it still looks lively, just pins at max
+   less constantly. */
+#define VIZ_SCALE 21.0
 /* How often the capture process is killed and restarted with a fresh,
    truncated file. Bounds disk usage (44100 * 2 bytes/sec * this many
    seconds) and, as an unavoidable side effect, causes a brief real
