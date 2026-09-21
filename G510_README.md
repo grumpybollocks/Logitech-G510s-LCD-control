@@ -90,8 +90,14 @@ Desktop icons (in `~/Desktop`, named "G510 LCD - ..."):
 ## How To Make A Code Change
 
 1. Edit `g510_lcd_stats.c` or `g510_lcd_buttons.c`
-2. Double-click "G510 LCD - Rebuild" on the Desktop (or run `./rebuild.sh`) — this recompiles both and restarts the services for you.
+2. Double-click "G510 LCD - Rebuild" on the Desktop (or run `./scripts/rebuild.sh`) — this recompiles both and restarts the services for you.
 3. If you touched pixel-drawing code, check the screen for garbage — see "The Pixel Format" below before assuming it's a typo.
+4. **Run `scripts/leak-check.sh`** (about a minute; the LCD goes dark while it runs and comes back by itself). It runs the program under glibc's allocation tracer and **fails if memory allocated late in the run is never freed**. This is the check that would have caught the 2026-09 FreeType canvas leak (the service grew ~1 GB/hour, 8 GB in 7.5 h) in a minute instead of a day. Needs `gdb` and glibc's `libc_malloc_debug.so.0`.
+
+   Rules that leak check enforces (learned the hard way):
+   - Every `g15canvas` you set up with `g15r_initCanvas()` must be declared `g15canvas c G15_CANVAS_AUTO = {0};`. In this TTF build `g15r_initCanvas()` starts a whole FreeType library per canvas and libg15render never frees it, so a canvas that just goes out of scope leaks ~2.7 KB. `G15_CANVAS_AUTO` releases it on every exit path; `= {0}` keeps the cleanup safe if FreeType's setup ever fails.
+   - Anything you `fork()` must die with its parent. `audio_visualizer.h` sets `PR_SET_PDEATHSIG` on the `parec` child; a SIGKILL or crash otherwise leaves it recording forever into a deleted file on the RAM-backed `/run/user` tmpfs (~170 MB/hour each, invisible to `ls`).
+   - After a change, `ps -eo pid,ppid,args | grep parec` must show exactly one `parec`, a child of the service.
 
 ## The Pixel Format (the single most important thing to know)
 
