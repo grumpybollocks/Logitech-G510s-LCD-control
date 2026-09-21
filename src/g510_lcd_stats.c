@@ -32,7 +32,9 @@
    gdb: 2805 unfreed FT_Init_FreeType libraries in 30s; the service had
    grown to 8GB after 7.5h). Declare a canvas with G15_CANVAS_AUTO and its
    FreeType library is released on EVERY scope exit path, including the
-   `continue`s in main()'s loop. */
+   `continue`s in main()'s loop. Always declare such a canvas `= {0}` too:
+   if FT_Init_FreeType ever fails (a malloc failure) ftLib then stays NULL
+   and the cleanup is a harmless no-op, instead of freeing stack garbage. */
 static void release_canvas_ft(g15canvas *c) {
     if (c->ftLib) FT_Done_FreeType(c->ftLib);
 }
@@ -653,7 +655,7 @@ static void draw_label(g15canvas *c, int x, int y, const char *label) {
    hack. */
 static int measure_builtin_text_width(const char *s, int font_size) {
     if (!s[0]) return 0;
-    g15canvas scratch G15_CANVAS_AUTO;
+    g15canvas scratch G15_CANVAS_AUTO = {0};
     g15r_initCanvas(&scratch);
     g15r_renderString(&scratch, (unsigned char*)s, 0, font_size, 0, 0);
     int max_x = -1;
@@ -1597,7 +1599,7 @@ int main(int argc, char **argv) {
     if (argc >= 3 && strcmp(argv[1], "--preview") == 0) {
         int screen = atoi(argv[2]);
         const char *outpath = argc >= 4 ? argv[3] : "/tmp/g510_preview.ppm";
-        g15canvas canvas G15_CANVAS_AUTO;
+        g15canvas canvas G15_CANVAS_AUTO = {0};
         g15r_initCanvas(&canvas);
         update_net_speed();
         update_media_info();
@@ -1612,7 +1614,7 @@ int main(int argc, char **argv) {
     }
 
     while (1) {
-        g15canvas canvas G15_CANVAS_AUTO;
+        g15canvas canvas G15_CANVAS_AUTO = {0};
         g15r_initCanvas(&canvas);
 
         /* Direct report after actually watching it live: "i can only
