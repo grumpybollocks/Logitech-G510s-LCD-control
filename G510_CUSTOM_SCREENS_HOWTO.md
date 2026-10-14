@@ -18,8 +18,9 @@ the L2-L5 buttons on the keyboard. Here's the whole thing, short version.
 
 2. **Add a sensor** — pick one (CPU %, RAM, GPU temp, whatever) from
    the first dropdown, pick **Number** (just shows the value) or
-   **Bar** (shows a bar + the value), click **Add**. It shows up on
-   the preview above.
+   **Bar** (shows a bar + the value), choose horizontal or vertical
+   orientation for bars, then click **Add**. Vertical bars show only
+   the bar; use a nearby text element for a heading.
 
 3. **Add text** — click **Add Text...**, type whatever you want (a
    label, a name, anything static), and it lands on the preview like
@@ -58,13 +59,16 @@ resize, add, remove) saves itself instantly.
   preview shows you exactly what the real keyboard will show, so if it
   looks wrong in the app, it'll look wrong on the keyboard too — space
   things out.
-- **Each kind of element has its own cap per screen**: 8 sensors, 2
+- **Each kind of element has its own cap per screen**: 16 sensors, 2
   images, 4 text fields — not one shared total, so e.g. a screen can
-  have 8 sensors AND 2 images AND 4 text fields at once. The app will
+  have 16 sensors AND 2 images AND 4 text fields at once. The app will
   tell you if you hit any of these limits.
 - **"Bar" isn't available for every sensor** — only ones with an
   honest 0-100% or a sensible temperature range (the app will tell you
   if you pick one that can't; it just shows as a number instead).
+- **Vertical bars** are useful for compact multi-core or GPU meters.
+  Hover near the lower end of a vertical bar and drag its handle up or
+  down to resize it.
 - **The blue resize handle only shows up when you're near a bar or a
   resizable image.** It used to always show on every bar at once,
   which looked cluttered and confusing — now it only appears when
@@ -79,3 +83,14 @@ Once your custom screen looks right in the app, press the matching
 physical L-button on the keyboard (L2, L3, L4, or L5) to see it live.
 If the keyboard doesn't seem to reflect your latest changes, it might
 need the LCD service restarted — ask for that if you're not sure how.
+
+## C2DtoG15-style dashboard
+
+Click **Apply C2DtoG15 layout** to replace the selected L2-L5 screen
+with a compact dashboard containing eight per-logical-core CPU
+utilization bars, GPU edge temperature, GPU utilization, RAM usage,
+and current network upload/download rates. The app asks before
+replacing the selected screen. CPU bar heights show utilization (not
+temperature); Linux does not expose per-core CPU temperatures on all
+hardware. You can move or resize the generated elements and remove or
+add sensors like any other custom screen.

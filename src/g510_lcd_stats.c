@@ -419,6 +419,21 @@ static void draw_slim_bar(g15canvas *c, int x1, int x2, int y, int h, int pct) {
     }
 }
 
+static void draw_vertical_slim_bar(g15canvas *c, int x, int y, int w, int h, int pct) {
+    if (pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
+    if (w < 2 || h < 2) return;
+    g15r_drawLine(c, x, y, x, y + h - 1, G15_COLOR_BLACK);
+    g15r_drawLine(c, x + w - 1, y, x + w - 1, y + h - 1, G15_COLOR_BLACK);
+    g15r_drawLine(c, x, y + h - 1, x + w - 1, y + h - 1, G15_COLOR_BLACK);
+    int inner_h = h - 2;
+    int fill_h = (int)(inner_h * (pct / 100.0) + 0.5);
+    if (fill_h > 0) {
+        g15r_pixelBox(c, x + 1, y + inner_h - fill_h + 1,
+                      x + w - 2, y + h - 2, G15_COLOR_BLACK, 1, G15_PIXEL_FILL);
+    }
+}
+
 /* Labels: Eurostile Bold (custom-converted, matches original G510 look).
    Numbers: the library's own built-in bitmap font -- it was purpose-built
    for this exact tiny resolution, so it stays legible where converted
@@ -912,8 +927,8 @@ static const sensor_def_t SENSORS[] = {
     {"DISK_ROOT_PCT", "DISK", 1, 0, 0},
     {"DISK_SECONDARY_PCT", "DSK2", 1, 0, 0},
     {"UPTIME", "UPTM", 0, 0, 0},
-    {"NET_DOWN", "DOWN", 0, 0, 0},
-    {"NET_UP", "UPLD", 0, 0, 0},
+    {"NET_DOWN", "DN", 0, 0, 0},
+    {"NET_UP", "UP", 0, 0, 0},
     /* Direct request: "when selected, i dont want them to say time:
        xx:xx or date : xxxx / drop the lables" -- an empty label is
        safe here without any new code path: label_text_width("") is 0
@@ -937,10 +952,74 @@ static const sensor_def_t SENSORS[] = {
     {"MB_TEMP6", "MB6", 0, 1, 0},
 };
 
+#define CPU_CORE_SENSOR_COUNT 8
+static sensor_def_t cpu_core_sensors[CPU_CORE_SENSOR_COUNT];
+static char cpu_core_keys[CPU_CORE_SENSOR_COUNT][16];
+static char cpu_core_labels[CPU_CORE_SENSOR_COUNT][8];
+static int cpu_core_sensors_ready = 0;
+static const char *cpu_core_label_names[CPU_CORE_SENSOR_COUNT] = {
+    "C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8"
+};
+
+static void init_cpu_core_sensors(void) {
+    if (cpu_core_sensors_ready) return;
+    for (int i = 0; i < CPU_CORE_SENSOR_COUNT; i++) {
+        snprintf(cpu_core_keys[i], sizeof(cpu_core_keys[i]), "CPU_CORE_%d", i);
+        snprintf(cpu_core_labels[i], sizeof(cpu_core_labels[i]), "%s", cpu_core_label_names[i]);
+        cpu_core_sensors[i] = (sensor_def_t){cpu_core_keys[i], cpu_core_labels[i], 1, 0, 0};
+    }
+    cpu_core_sensors_ready = 1;
+}
+
 static const sensor_def_t *find_sensor(const char *key) {
     for (size_t i = 0; i < sizeof(SENSORS) / sizeof(SENSORS[0]); i++)
         if (strcmp(SENSORS[i].key, key) == 0) return &SENSORS[i];
+    init_cpu_core_sensors();
+    for (int i = 0; i < CPU_CORE_SENSOR_COUNT; i++)
+        if (strcmp(cpu_core_sensors[i].key, key) == 0) return &cpu_core_sensors[i];
     return NULL;
+}
+
+static double get_cpu_core_percent(int core) {
+    static unsigned long long previous_total[CPU_CORE_SENSOR_COUNT];
+    static unsigned long long previous_idle[CPU_CORE_SENSOR_COUNT];
+    static int initialized[CPU_CORE_SENSOR_COUNT];
+    if (core < 0 || core >= CPU_CORE_SENSOR_COUNT) return 0.0;
+
+    FILE *f = fopen("/proc/stat", "r");
+    if (!f) return 0.0;
+    char line[256];
+    char expected[16];
+    snprintf(expected, sizeof(expected), "cpu%d", core);
+    unsigned long long user, nice, system, idle, iowait, irq, softirq, steal;
+    int found = 0;
+    while (fgets(line, sizeof(line), f)) {
+        char name[16];
+        if (sscanf(line, "%15s %llu %llu %llu %llu %llu %llu %llu %llu",
+                   name, &user, &nice, &system, &idle, &iowait, &irq, &softirq, &steal) == 9 &&
+            strcmp(name, expected) == 0) {
+            found = 1;
+            break;
+        }
+    }
+    fclose(f);
+    if (!found) return 0.0;
+
+    unsigned long long total = user + nice + system + idle + iowait + irq + softirq + steal;
+    unsigned long long idle_total = idle + iowait;
+    if (!initialized[core]) {
+        previous_total[core] = total;
+        previous_idle[core] = idle_total;
+        initialized[core] = 1;
+        return 0.0;
+    }
+    unsigned long long delta_total = total - previous_total[core];
+    unsigned long long delta_idle = idle_total - previous_idle[core];
+    previous_total[core] = total;
+    previous_idle[core] = idle_total;
+    return delta_total > 0
+        ? 100.0 * (double)(delta_total - delta_idle) / (double)delta_total
+        : 0.0;
 }
 
 /* Fills pct_for_bar (0-100, or -1 if this sensor has no honest bar scale /
@@ -953,6 +1032,14 @@ static void get_sensor_value(const char *key, double *pct_for_bar, char *disp, s
         double v = get_cpu_percent();
         *pct_for_bar = v;
         snprintf(disp, displen, "%d%%", (int)(v + 0.5));
+    } else if (strncmp(key, "CPU_CORE_", 9) == 0) {
+        char *end = NULL;
+        long core = strtol(key + 9, &end, 10);
+        if (end && *end == '\0' && core >= 0 && core < CPU_CORE_SENSOR_COUNT) {
+            double v = get_cpu_core_percent((int)core);
+            *pct_for_bar = v;
+            snprintf(disp, displen, "%d%%", (int)(v + 0.5));
+        }
     } else if (strcmp(key, "CPU_GHZ") == 0) {
         snprintf(disp, displen, "%.1fGHz", get_cpu_ghz());
     } else if (strcmp(key, "CPU_TEMP") == 0) {
@@ -1033,15 +1120,17 @@ static void get_sensor_value(const char *key, double *pct_for_bar, char *disp, s
     }
 }
 
-#define MAX_ELEMENTS 8
+#define MAX_ELEMENTS 16
 #define MAX_IMAGES 2 /* the screen is 160x43 -- rarely useful to fit more than this */
 #define MAX_CUSTOM_SCREENS 4 /* L2, L3, L4, L5 */
 
 typedef struct {
     char sensor[24];
     char style[8]; /* "number" or "bar" */
+    char orientation[12]; /* "horizontal" or "vertical" for bars */
     int x, y;
     int width; /* bar length in px, only meaningful for style="bar" -- ignored for "number" */
+    int height; /* vertical bar length in px */
     int font_size; /* G15_TEXT_SMALL(0)/MED(1)/LARGE(2)/HUGE(3) -- the VALUE
                        text only; the sensor label always uses the fixed
                        custom label_font, same as before this was added. */
@@ -1139,9 +1228,12 @@ static void load_custom_screens(void) {
             custom_screen_t *cs = &custom_screens[current];
             if (cs->count >= MAX_ELEMENTS) continue;
             element_t *el = &cs->elements[cs->count];
-            el->sensor[0] = 0; el->style[0] = 0; el->x = 0; el->y = 0;
+            el->sensor[0] = 0; el->style[0] = 0;
+            strcpy(el->orientation, "horizontal");
+            el->x = 0; el->y = 0;
             el->width = 40; /* matches the previous hardcoded bar length -- old
                                 config lines with no width= keep looking identical */
+            el->height = 28;
             el->font_size = G15_TEXT_SMALL; /* old lines with no font= keep looking identical */
             char rest[256];
             strncpy(rest, line + 8, sizeof(rest) - 1);
@@ -1152,9 +1244,12 @@ static void load_custom_screens(void) {
                 if (sscanf(tok, "%31[^=]=%63s", key, val) == 2) {
                     if (strcmp(key, "sensor") == 0) { strncpy(el->sensor, val, sizeof(el->sensor) - 1); el->sensor[sizeof(el->sensor) - 1] = 0; }
                     else if (strcmp(key, "style") == 0) { strncpy(el->style, val, sizeof(el->style) - 1); el->style[sizeof(el->style) - 1] = 0; }
+                    else if (strcmp(key, "orientation") == 0 && strcmp(val, "vertical") == 0)
+                        strcpy(el->orientation, "vertical");
                     else if (strcmp(key, "x") == 0) el->x = atoi(val);
                     else if (strcmp(key, "y") == 0) el->y = atoi(val);
                     else if (strcmp(key, "width") == 0) el->width = atoi(val);
+                    else if (strcmp(key, "height") == 0) el->height = atoi(val);
                     else if (strcmp(key, "font") == 0) {
                         int f = atoi(val);
                         el->font_size = (f >= G15_TEXT_SMALL && f <= G15_TEXT_HUGE) ? f : G15_TEXT_SMALL;
@@ -1265,6 +1360,7 @@ static void load_custom_screens(void) {
 typedef struct {
     int label_x1, label_y1, label_x2, label_y2; /* covers just the label glyph */
     int is_bar;
+    int is_vertical;
     int bar_x1, bar_x2, bar_y1, bar_y2;           /* only valid if is_bar */
     int value_x2; /* real measured right edge of the value text (after
                       any truncation) -- replaces an old fixed "+30px"
@@ -1284,8 +1380,11 @@ static void draw_element(g15canvas *c, element_t *el) {
     char disp[32];
     get_sensor_value(el->sensor, &pct_for_bar, disp, sizeof(disp));
 
-    draw_label(c, el->x, el->y, def->label);
-    int label_w = label_text_width(def->label);
+    int vertical_bar = strcmp(el->style, "bar") == 0 &&
+                       strcmp(el->orientation, "vertical") == 0 &&
+                       (def->is_percent || def->is_temp) && pct_for_bar >= 0;
+    if (!vertical_bar) draw_label(c, el->x, el->y, def->label);
+    int label_w = vertical_bar ? 0 : label_text_width(def->label);
     int value_x = el->x + label_w + 4;
 
     element_bounds_t *b = (g_element_bounds_count < MAX_ELEMENTS)
@@ -1294,6 +1393,7 @@ static void draw_element(g15canvas *c, element_t *el) {
         b->label_x1 = el->x; b->label_y1 = el->y;
         b->label_x2 = el->x + label_w; b->label_y2 = el->y + label_text_height();
         b->is_bar = 0;
+        b->is_vertical = 0;
     }
 
     /* Real bug found by direct testing: a long value (a real song
@@ -1327,7 +1427,28 @@ static void draw_element(g15canvas *c, element_t *el) {
        (a true percent, or a temperature via the same 0-90C convention
        already used on the built-in stats screen). Anything else silently
        falls back to number style rather than inventing a scale. */
-    if (strcmp(el->style, "bar") == 0 && (def->is_percent || def->is_temp) && pct_for_bar >= 0) {
+    if (vertical_bar) {
+        int bar_x1 = el->x;
+        int bar_width = el->width;
+        int bar_y1 = el->y;
+        int bar_height = el->height;
+        if (bar_width < 2) bar_width = 2;
+        if (bar_width > G15_LCD_WIDTH - bar_x1) bar_width = G15_LCD_WIDTH - bar_x1;
+        if (bar_height < 2) bar_height = 2;
+        if (bar_height > G15_LCD_HEIGHT - bar_y1) bar_height = G15_LCD_HEIGHT - bar_y1;
+        draw_vertical_slim_bar(c, bar_x1, bar_y1, bar_width, bar_height, (int)pct_for_bar);
+        if (b) {
+            b->label_x1 = bar_x1;
+            b->label_y1 = bar_y1;
+            b->label_x2 = bar_x1 + bar_width;
+            b->label_y2 = bar_y1 + bar_height;
+            b->is_bar = 1;
+            b->is_vertical = 1;
+            b->bar_x1 = bar_x1; b->bar_x2 = bar_x1 + bar_width;
+            b->bar_y1 = bar_y1; b->bar_y2 = bar_y1 + bar_height;
+            b->value_x2 = bar_x1 + bar_width;
+        }
+    } else if (strcmp(el->style, "bar") == 0 && (def->is_percent || def->is_temp) && pct_for_bar >= 0) {
         int bar_x1 = value_x;
         int bar_x2 = bar_x1 + el->width;
         /* The value text after a bar starts past the bar itself, not
@@ -1340,6 +1461,7 @@ static void draw_element(g15canvas *c, element_t *el) {
         g15r_renderString(c, (unsigned char*)disp, 0, el->font_size, bar_x2 + 4, el->y);
         if (b) {
             b->is_bar = 1;
+            b->is_vertical = 0;
             b->bar_x1 = bar_x1; b->bar_x2 = bar_x2;
             b->bar_y1 = el->y; b->bar_y2 = el->y + BAR_H;
             b->value_x2 = bar_x2 + 4 + value_w;
@@ -1366,9 +1488,9 @@ static void write_bounds_meta(const char *outpath) {
     for (int i = 0; i < g_element_bounds_count; i++) {
         element_bounds_t *b = &g_element_bounds[i];
         if (b->is_bar) {
-            fprintf(f, "%d label_x1=%d label_y1=%d label_x2=%d label_y2=%d bar_x1=%d bar_y1=%d bar_x2=%d bar_y2=%d value_x2=%d\n",
+            fprintf(f, "%d label_x1=%d label_y1=%d label_x2=%d label_y2=%d bar_x1=%d bar_y1=%d bar_x2=%d bar_y2=%d value_x2=%d vertical=%d\n",
                     i, b->label_x1, b->label_y1, b->label_x2, b->label_y2,
-                    b->bar_x1, b->bar_y1, b->bar_x2, b->bar_y2, b->value_x2);
+                    b->bar_x1, b->bar_y1, b->bar_x2, b->bar_y2, b->value_x2, b->is_vertical);
         } else {
             fprintf(f, "%d label_x1=%d label_y1=%d label_x2=%d label_y2=%d value_x2=%d\n",
                     i, b->label_x1, b->label_y1, b->label_x2, b->label_y2, b->value_x2);
