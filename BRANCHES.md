@@ -1,60 +1,28 @@
-# Branch map
+# Übersicht der Branches
 
-This repo holds one app, for one keyboard: the Logitech G510s (LCD/
-backlight/G-keys). Keeping this file up to date is the whole point of
-it -- if a branch's purpose changes, update its entry here in the same
-commit.
+Dieses Repository enthält eine Anwendung für eine Tastatur: die Logitech G510s (LCD, Hintergrundbeleuchtung und G-Tasten). Diese Datei soll aktuell bleiben. Ändert sich der Zweck eines Branches, muss der zugehörige Eintrag im selben Commit angepasst werden.
 
-See [`READY_FOR_ANYONE.md`](READY_FOR_ANYONE.md) for what makes the
-app actually installable by someone other than us -- what's already
-solid, what's still a known gap.
+Unter [`READY_FOR_ANYONE.md`](READY_FOR_ANYONE.md) steht, was die Anwendung für die Installation durch andere Personen bereits zuverlässig erfüllt und welche bekannten Lücken noch bestehen.
 
-## Formerly a two-keyboard repo
+## Früher ein Repository für zwei Tastaturen
 
-Until 2026-09-17 this repo also held a separate app for the Logitech
-G910 Orion Spectrum (per-key RGB/macros), developed alongside the
-G510s app for a while. That app's source, docs, install script,
-packaging, and service unit have been removed from `main` as of
-2026-09-17 -- confirmed content-for-content (every shared file, at
-every matching tag, not just by commit log) that the app's own
-standalone public repo, [grumpybollocks/g910-control](https://github.com/grumpybollocks/g910-control),
-already has everything from here and more. `main` is now exclusively
-about the G510s.
+Bis zum 17.09.2026 enthielt dieses Repository auch eine separate Anwendung für die Logitech G910 Orion Spectrum (RGB-Beleuchtung einzelner Tasten und Makros), die zeitweise parallel zur G510s-Anwendung entwickelt wurde. Deren Quellcode, Dokumentation, Installationsskript, Paketierung und Dienstdatei wurden am 17.09.2026 aus `main` entfernt. Der vollständige Abgleich aller gemeinsamen Dateien und passenden Tags bestätigte, dass das eigenständige öffentliche Repository [grumpybollocks/g910-control](https://github.com/grumpybollocks/g910-control) bereits den gesamten damaligen Stand und zusätzliche Verbesserungen enthält. `main` ist nun ausschließlich der G510s gewidmet.
 
-The old `g910` and `g910-canvas` branches, the short-lived empty
-`g510s` branch, and every `g910-*` tag (`g910-v1.0`-`v1.4`,
-`g910-gui-v1`, `g910-skeleton-v1-buttongrid`) were fully superseded by
-that same verification and have since been deleted from this repo too
-(2026-09-17). A full `--mirror` backup of this repo's pre-cleanup state
-was taken first, so none of it is actually unrecoverable even though
-it's gone from GitHub now.
+Auch die alten Branches `g910` und `g910-canvas`, der kurzlebige leere Branch `g510s` sowie alle `g910-*`-Tags (`g910-v1.0` bis `v1.4`, `g910-gui-v1` und `g910-skeleton-v1-buttongrid`) wurden nach derselben Überprüfung am 17.09.2026 gelöscht. Zuvor wurde eine vollständige `--mirror`-Sicherung des Repositorys erstellt. Der entfernte Stand ist daher nicht unwiederbringlich verloren, auch wenn er nicht mehr auf GitHub liegt.
 
-## Active branches
+## Aktive Branches
 
-- **`main`** -- the G510s app: LCD stats display, backlight, G-key
-  macros. Tagged `v1.0`.
-- **`g510s-dev`** -- active development, driven from the machine with
-  the actual G510s hardware attached (this app can only be tested for
-  real from there). This is the canonical branch for ongoing work;
-  merges back into `main` when a feature is done and physically
-  confirmed on the real keyboard -- nothing gets tagged or merged
-  before that, standing rule, not a delay.
+- **`main`** – die G510s-Anwendung mit LCD-Statistiken, Beleuchtungssteuerung und G-Tasten-Makros. Mit `v1.0` markiert.
+- **`g510s-dev`** – aktive Entwicklung auf dem Rechner mit angeschlossener G510s. Die Funktionen lassen sich nur dort an der echten Tastatur vollständig testen. Dies ist der maßgebliche Branch für die weitere Entwicklung. Änderungen werden erst nach Abschluss und Bestätigung an der echten Tastatur in `main` übernommen und markiert. Das ist eine feste Regel, keine Verzögerung.
 
-## Historical / frozen branches (kept for reference, not deleted)
+## Historische / eingefrorene Branches
 
-- **`legacy-yad-backlight-script`** -- the original yad/bash backlight
-  script for the G510s, frozen as a standalone reference. Superseded
-  by the app's own Backlight tab.
+Diese Branches bleiben als Referenz erhalten und werden nicht gelöscht:
+
+- **`legacy-yad-backlight-script`** – das ursprüngliche eigenständige yad-/Bash-Skript zur Beleuchtungssteuerung der G510s. Es wurde durch den Beleuchtungs-Tab der Anwendung ersetzt.
 
 ## Tags
 
-- `v1.0` -- G510s v1.0 (LCD stats, backlight, G-key macros), the
-  tagged/confirmed baseline on `main`.
-- `pre-canvas-checkpoint` -- snapshot right before the Backlight +
-  G-Keys canvas rearchitecture began, includes the v1.1 Custom Screens
-  (AIDA64-style sensor dashboard for L2-L5) work.
-- `g510-canvas-v1` / `g510-canvas-v2` / `g510-canvas-v3` -- checkpoints
-  through the canvas rearchitecture: the macro-assigned key indicator
-  and a full solo self-audit (v1), hover cursor feedback and
-  contextual hint text (v2), and a real fix for M1/M2/M3 clicks
-  reverting after ~500ms (v3).
+- **`v1.0`** – G510s v1.0 (LCD-Statistiken, Beleuchtung und G-Tasten-Makros); markierter und bestätigter Ausgangsstand in `main`.
+- **`pre-canvas-checkpoint`** – Sicherung unmittelbar vor dem Umbau der Beleuchtungs- und G-Tasten-Oberfläche zum Canvas; enthält bereits die Arbeit an Custom Screens v1.1 (AIDA64-ähnliches Sensordashboard für L2–L5).
+- **`g510-canvas-v1` / `g510-canvas-v2` / `g510-canvas-v3`** – Sicherungspunkte während des Canvas-Umbaus: Anzeige der mit Makros belegten Tasten und vollständige Eigenprüfung (v1), Mauszeiger-Feedback und kontextbezogene Hinweise (v2) sowie die echte Fehlerkorrektur für M1/M2/M3-Klicks, deren Auswahl nach etwa 500 ms zurücksprang (v3).

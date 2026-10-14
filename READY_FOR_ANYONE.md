@@ -1,78 +1,28 @@
-# Ready for anyone
+# Für alle installierbar
 
-This isn't a personal script that happens to work on one machine — it's
-a finished app anyone can pick up, clone, and run on their own G510s,
-with nothing tying it back to how it was originally built. This doc
-records what makes that true, and what's left before it gets there
-fully.
+Dies ist kein persönliches Skript, das zufällig auf einem einzelnen Rechner funktioniert. Es ist eine fertige Anwendung, die andere Personen für ihre eigene G510s klonen und ausführen können, ohne an die ursprüngliche Entwicklungsumgebung gebunden zu sein. Diese Datei hält fest, warum das so ist und welche Punkte noch offen sind, bis die Anwendung dieses Ziel vollständig erfüllt.
 
-## The short version
+## Kurzfassung
 
-The app doesn't hardcode a username, hostname, or checkout location
-anywhere in the actual source/config that ships. `install.sh` resolves
-its own real location at run time (`DIR="$(cd "$(dirname "$0")" &&
-pwd)"`) and either substitutes that into a checked-in
-`__PROJECT_DIR__` placeholder (systemd service files, the udev rule)
-or passes it to the C compiler as `-DPROJECT_DIR` (the LCD program,
-with a compile-time `#error` if that flag is ever missing — no silent
-wrong-path fallback). The install script also generates its own
-desktop launchers fresh from the real resolved path, rather than
-assuming one already exists. Clone it anywhere, run the installer, it
-works — that's the bar.
+Der ausgelieferte Quellcode und die Konfiguration enthalten weder einen fest eingetragenen Benutzernamen oder Rechnernamen noch einen fest angenommenen Klonpfad. `install.sh` ermittelt seinen tatsächlichen Speicherort zur Laufzeit (`DIR="$(cd "$(dirname "$0")" && pwd)"`) und ersetzt damit entweder den Platzhalter `__PROJECT_DIR__` in den eingecheckten systemd-Dienstdateien und der udev-Regel oder übergibt den Pfad mit `-DPROJECT_DIR` an den C-Compiler. Das LCD-Programm enthält ein `#error` zur Übersetzungszeit, falls dieses Flag fehlt – es gibt keinen stillen Rückfall auf einen falschen Pfad. Das Installationsskript erzeugt außerdem alle Desktop-Starter neu anhand des ermittelten Pfades, statt vorauszusetzen, dass sie bereits existieren. Klonen, beliebigen Speicherort wählen, Installationsskript ausführen – genau das ist der Anspruch.
 
-## What the install script actually does
+## Was das Installationsskript tatsächlich erledigt
 
 `install.sh`:
-1. Resolves its own real location (`$DIR`), independent of where the
-   repo was cloned.
-2. Checks each dependency's install status first and reports it
-   (`[ok]`/`[missing]`) before touching the system — never a silent
-   `pacman -S` black box.
-3. Installs only what's actually missing.
-4. Prompts/exits with a clear message instead of guessing when
-   something genuinely can't be auto-determined — see the script's
-   own comments for the specific cases.
-5. Substitutes `__PROJECT_DIR__`/passes `-DPROJECT_DIR` into every
-   checked-in service file, udev rule, and C source that needs to know
-   where it's actually installed.
-6. Generates a desktop launcher fresh, written to BOTH `~/Desktop` (a
-   literal desktop icon) and `~/.local/share/applications` (the
-   standard XDG location every desktop environment's actual app menu
-   reads — several DEs, GNOME notably, don't show desktop icons at
-   all by default, so relying on `~/Desktop` alone would make the app
-   undiscoverable there regardless of path-correctness).
+
+1. Ermittelt unabhängig vom Klonpfad seinen tatsächlichen Speicherort (`$DIR`).
+2. Prüft zuerst jede Abhängigkeit und meldet deren Status (`[ok]`/`[missing]`), bevor das System verändert wird. Es gibt kein still im Hintergrund laufendes `pacman -S`.
+3. Installiert nur tatsächlich fehlende Abhängigkeiten.
+4. Fragt nach oder beendet sich mit einer verständlichen Meldung, statt bei Dingen zu raten, die sich nicht zuverlässig automatisch bestimmen lassen. Die konkreten Fälle stehen in den Kommentaren des Skripts.
+5. Ersetzt `__PROJECT_DIR__` beziehungsweise übergibt `-DPROJECT_DIR` an jede eingecheckte Dienstdatei, udev-Regel und C-Quelldatei, die den Installationsort kennen muss.
+6. Erzeugt Desktop-Starter anhand des tatsächlichen Pfads und schreibt sie sowohl nach `~/Desktop` (als Desktop-Symbol) als auch nach `~/.local/share/applications` (dem standardisierten XDG-Speicherort für Anwendungsmenüs). Manche Desktop-Umgebungen – insbesondere GNOME – zeigen Desktop-Symbole standardmäßig gar nicht an; nur `~/Desktop` zu verwenden würde die Anwendung dort trotz korrektem Pfad unauffindbar machen.
 
 ## Status
 
-**Done and verified this pass**, on the machine with the actual G510s
-hardware — `install.sh` generates all 5 desktop launchers fresh from
-the resolved `$DIR`. Tested by running just the shortcut-generation
-logic in isolation (not the full installer, which would trigger
-unrelated sudo/pacman/udev/systemd changes), diffing the regenerated
-files against the real working originals — only difference was added
-`Exec=` path quoting (a real robustness improvement), confirmed the
-app still launches cleanly via the quoted command, confirmed
-`dolphin`/`konsole`/`gio` are all present on this system. `zenity`
-added to the dependency list. Shortcuts now also land in
-`~/.local/share/applications`.
+**In diesem Durchlauf erledigt und überprüft**, auf dem Rechner mit der echten G510s: `install.sh` erzeugt alle fünf Desktop-Starter frisch anhand des ermittelten `$DIR`. Getestet wurde ausschließlich die Logik zur Erzeugung der Starter – nicht das vollständige Installationsskript, das unabhängige Änderungen an `sudo`, `pacman`, udev und systemd auslösen würde. Die neu erzeugten Dateien wurden mit den funktionierenden Originalen verglichen. Der einzige Unterschied waren Anführungszeichen im `Exec=`-Pfad, eine echte Robustheitsverbesserung. Außerdem wurde bestätigt, dass die Anwendung mit dem quotierten Befehl startet und dass `dolphin`, `konsole` und `gio` auf diesem System vorhanden sind. `zenity` wurde zu den Abhängigkeiten hinzugefügt. Die Starter werden jetzt zusätzlich unter `~/.local/share/applications` abgelegt.
 
-## Researched against a real reference, not guessed
+## An einem echten Vorbild geprüft, nicht geraten
 
-Checked `pacman -Ql solaar` — a real, actively-maintained, officially
-Arch-packaged Logitech device manager already installed on this
-machine, same problem domain (Logitech HID++ device control, PyQt-
-based GUI, needs a udev rule). Its actual installed layout — `/usr/bin/
-solaar`, `/usr/lib/udev/rules.d/`, `/usr/share/applications/
-solaar.desktop`, Python source under `/usr/lib/python3.*/
-site-packages/` — confirmed the standard, professional pattern: a real
-system package installs everything to fixed locations at build time,
-so there's no per-user path to discover at runtime at all. The
-`__PROJECT_DIR__`-templating this repo does today is the right answer
-for a "git clone + run install.sh" install; a real AUR package
-(PKGBUILD per app, `/usr/lib/systemd/user/` for the service units,
-`/usr/lib/udev/rules.d/` for the udev rule, pacman's own `depends=`
-handling dependency resolution instead of a hand-rolled script) is the
-next step under consideration for going all the way from "anyone can
-clone and run this" to "anyone can just `yay -S` it" (a real
-`packaging/g510-lcd/` PKGBUILD already exists on `g510s-dev`, see the
-table in the main README) — not yet started here on `main`.
+`pacman -Ql solaar` wurde geprüft: Solaar ist ein reales, aktiv gepflegtes, offiziell für Arch paketiertes Logitech-Geräteverwaltungsprogramm, das auf diesem Rechner installiert ist. Es gehört zum selben Problemfeld (Steuerung von Logitech-HID++-Geräten, grafische PyQt-Oberfläche und eine benötigte udev-Regel). Die tatsächlich installierte Verzeichnisstruktur – `/usr/bin/solaar`, `/usr/lib/udev/rules.d/`, `/usr/share/applications/solaar.desktop` und Python-Quellcode unter `/usr/lib/python3.*/site-packages/` – bestätigt das übliche professionelle Muster: Ein Systempaket installiert Dateien beim Erstellen an feste Speicherorte, sodass zur Laufzeit kein benutzerspezifischer Installationspfad ermittelt werden muss.
+
+Die in diesem Repository verwendete Vorlage `__PROJECT_DIR__` ist für eine Installation per „Repository klonen und `install.sh` ausführen“ passend. Ein richtiges AUR-Paket wäre der nächste Schritt von „alle können das Repository klonen und installieren“ zu „alle können es einfach mit `yay -S` installieren“: ein PKGBUILD pro Anwendung, Dienstdateien unter `/usr/lib/systemd/user/`, die udev-Regel unter `/usr/lib/udev/rules.d/` und Abhängigkeitsauflösung über pacmans `depends=` statt eines eigenen Installationsskripts. Ein echtes `packaging/g510-lcd/`-PKGBUILD existiert bereits in `g510s-dev`; siehe die Tabelle in der Haupt-README. Auf `main` wurde dieser Schritt hier noch nicht begonnen.
