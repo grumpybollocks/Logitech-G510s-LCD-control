@@ -1,25 +1,16 @@
-# Version snapshots of g510_app.py
+# Versionsstände von `g510_app.py`
 
-The live, current version of the app is `g510_app.py` in the project
-root — that's the one to run and edit. This folder just keeps
-reference snapshots of earlier milestones for comparison, in case
-you ever want to see how a feature was added or roll back a specific
-piece.
+Die aktuelle Anwendung liegt als `g510_app.py` im Projektstamm – das ist die Datei, die ausgeführt und bearbeitet werden soll. Dieser Ordner enthält lediglich Momentaufnahmen früherer Entwicklungsstände zum Vergleichen und Nachvollziehen der Entwicklung.
 
-## v0.1 — Backlight only
+## v0.1 – Nur Beleuchtungssteuerung
 
-`g510_app_v0.1.py` — the app before G-Key macros existed. One tab:
-- Color preset dropdown + brightness slider, Apply / Apply Defaults
-- Start / Restart Service buttons
+`g510_app_v0.1.py` ist der Stand vor der Einführung der G-Tasten-Makros. Die Oberfläche hatte einen Tab mit:
 
-This is a frozen snapshot, not runnable as-is going forward (it still
-works standalone, but won't get future fixes — that all happens in
-the current `g510_app.py`).
+- Auswahlfeld für Farbprofile und Helligkeitsregler sowie **Apply** / **Apply Defaults**
+- Schaltflächen **Start Service** / **Restart Service**
 
-## Later versions
+Dieser historische Stand ist eingefroren und nicht als Grundlage für die weitere Entwicklung gedacht. Er kann zwar eigenständig laufen, erhält aber keine späteren Fehlerkorrekturen – diese erfolgen ausschließlich in der aktuellen `g510_app.py`.
 
-The next milestone (G-Keys tab: recording, playback via `ydotool`,
-M1/M2/M3 profiles) is documented in the main `README.txt` rather than
-snapshotted here, since it's still actively being finished (M-key
-profile-switching verification is paused, see the STATUS block at the
-top of `README.txt`).
+## Spätere Versionen
+
+Der nächste Entwicklungsschritt (G-Tasten-Tab mit Aufzeichnung, Wiedergabe über `ydotool` und Profilen M1/M2/M3) ist in der Hauptdatei `README.txt` dokumentiert und wird hier nicht als Snapshot abgelegt, weil er noch aktiv fertiggestellt wird. Die Überprüfung des Profilwechsels über die M-Tasten ist pausiert; siehe den STATUS-Abschnitt am Anfang von `README.txt`.

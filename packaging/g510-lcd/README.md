@@ -1,199 +1,74 @@
-# g510-lcd packaging
+# Paketierung von `g510-lcd`
 
-A real Arch/pacman PKGBUILD for the G510s app, alongside the existing
-`install.sh` git-clone install method (both are valid; this one
-follows the "package installs everything to fixed `/usr/...`
-locations, no per-user path discovery needed" pattern -- see
-`PORTABILITY.md`), mirroring `packaging/g910-control/` on the G910
-side, built the same night for direct comparison.
+Ein echtes Arch-/pacman-PKGBUILD für die G510s-Anwendung. Daneben bleibt die Installation über `install.sh` aus einem geklonten Repository weiterhin gültig. Dieses Paket folgt dem Muster „Dateien an feste `/usr/...`-Pfade installieren, keine benutzerspezifische Pfadsuche“ (siehe `PORTABILITY.md`) und wurde in derselben Nacht wie `packaging/g910-control/` für die G910-Seite erstellt, um die Ansätze direkt vergleichen zu können.
 
 ## Status
 
-Built, installed for real on the real machine (`sudo pacman -U`, run
-by the user directly after this session's own permission system
-blocked doing it automatically), and both gaps originally left open
-below are now closed with real fixes, not workarounds. **Not
-submitted to the AUR** -- that's still deliberately not done (see
-"Before real AUR submission" below). **G510s as a whole is still work
-in progress** -- this packaging pass being solid doesn't mean the app
-itself is "finished"; Custom Screens is still explicitly WIP, and
-nothing here changes the project's own standing rule that nothing
-gets tagged or called fully done until physically confirmed end to
-end on the real keyboard.
+Das Paket wurde auf dem echten Rechner erstellt und installiert (`sudo pacman -U`, vom Benutzer selbst ausgeführt, nachdem die Berechtigungsrichtlinien dieser Sitzung eine automatische Installation verhindert hatten). Die beiden ursprünglich offenen Punkte sind mit echten Korrekturen und nicht mit Umgehungen behoben. **Noch nicht im AUR eingereicht** – dies ist weiterhin bewusst zurückgestellt (siehe „Vor einer echten AUR-Einreichung“). **Die G510s-Anwendung als Ganzes ist weiterhin in Arbeit**: Custom Screens ist ausdrücklich noch WIP. Eine solide Paketierung bedeutet nicht, dass die Anwendung fertig ist, und ändert nichts an der Projektregel, dass erst nach vollständiger Prüfung an der echten Tastatur ein Release markiert oder als fertig bezeichnet wird.
 
-## Dependencies
+## Abhängigkeiten
 
-`depends=('python' 'python-pyqt5' 'python-pillow' 'python-evdev'
-'ydotool' 'freetype2' 'libg15render')`. Cross-checked against actual
-source, not copied from install.sh's list unexamined -- `yad` is in
-install.sh's pacman line but a real grep of every `.py`/`.c` file
-found zero uses of it anywhere in current code (leftover from the
-retired yad-based backlight script, see `BRANCHES.md`'s
-`legacy-yad-backlight-script` entry); correctly left out here.
-`python-pillow` is real and required (`png-to-lcd.py`'s Floyd-Steinberg
-dithering for the Custom Screens image-import feature).
+```sh
+depends=('python' 'python-pyqt5' 'python-pillow' 'python-evdev'
+         'ydotool' 'freetype2' 'libg15render')
+```
 
-## Layout -- deliberately NOT flat, unlike g910-control
+Die Abhängigkeiten wurden mit dem Quellcode abgeglichen und nicht ungeprüft aus `install.sh` übernommen. `yad` steht zwar in der `pacman`-Zeile des Installationsskripts, wird laut einer Suche in allen aktuellen `.py`- und `.c`-Dateien aber nirgends verwendet. Es ist ein Überbleibsel des eingestellten yad-basierten Beleuchtungsskripts (siehe den Eintrag `legacy-yad-backlight-script` in `BRANCHES.md`) und wurde hier daher korrekt weggelassen. `python-pillow` wird hingegen tatsächlich benötigt: `png-to-lcd.py` verwendet Floyd-Steinberg-Dithering für den Bildimport in Custom Screens.
 
-`packaging/g910-control`'s PKGBUILD installs its `.py` files flat
-under `/usr/lib/g910-control/` (no `src/` subdirectory). This package
-keeps the `src/` subdirectory:
+## Verzeichnisstruktur – bewusst nicht flach wie bei `g910-control`
 
-- `/usr/bin/g510-lcd` -- thin wrapper, `exec`s the real script
-- `/usr/lib/g510-lcd/src/*.py`, `*.c`-compiled binaries -- same shape
-  as the git-clone checkout, not flattened
-- `/usr/lib/systemd/user/g510-lcd-stats.service`,
-  `g510-lcd-buttons.service`, `g510-macro-daemon.service`
-- `/usr/lib/udev/rules.d/99-g510-lcd.rules` -- installed byte-identical
-  to the checked-in source, nothing stripped (see the resolved gap
-  below for why that's now possible)
-- `/usr/lib/g510-lcd/restore-backlight.sh` -- the udev-triggered
-  backlight-restore wrapper (see below)
+Das PKGBUILD von `packaging/g910-control` installiert seine `.py`-Dateien direkt unter `/usr/lib/g910-control/`, ohne Unterordner `src/`. Dieses Paket behält dagegen den Unterordner `src/` bei:
+
+- `/usr/bin/g510-lcd` – schlanker Starter, der das eigentliche Skript mit `exec` ausführt
+- `/usr/lib/g510-lcd/src/*.py` und kompilierte `*.c`-Programme – gleiche Struktur wie ein geklontes Repository, nicht abgeflacht
+- `/usr/lib/systemd/user/g510-lcd-stats.service`, `g510-lcd-buttons.service` und `g510-macro-daemon.service`
+- `/usr/lib/udev/rules.d/99-g510-lcd.rules` – bytegenau wie die eingecheckte Quelldatei installiert (siehe die inzwischen behobene Lücke weiter unten)
+- `/usr/lib/g510-lcd/restore-backlight.sh` – von udev aufgerufener Starter zum Wiederherstellen der Beleuchtung (siehe unten)
 - `/usr/share/applications/g510-lcd.desktop`
 - `/usr/share/licenses/g510-lcd/LICENSE`
 
-This isn't a style choice -- `g510_app.py` computes its own
-`PROJECT_DIR` as `Path(__file__).resolve().parent.parent`, and several
-of its own path constants (`STATS_BINARY`, `DEFAULTS_SCRIPT`, the
-`png-to-lcd.py` subprocess call) are built as `PROJECT_DIR / "src" /
-...` or `PROJECT_DIR / "scripts" / ...`. Flattening the layout the way
-`g910-control` does would silently break every one of those
-(`PROJECT_DIR` would resolve one directory too high, e.g. `/usr/lib`
-instead of `/usr/lib/g510-lcd`) without a real source change this pass
-didn't make. Keeping the checkout shape under a fixed root means the
-existing, already-tested path logic (the same code exercised by
-tonight's full regression suite) is correct here with zero changes,
-rather than a new, unverified code path.
+Das ist keine reine Stilentscheidung: `g510_app.py` ermittelt `PROJECT_DIR` mit `Path(__file__).resolve().parent.parent`. Mehrere Pfadkonstanten (`STATS_BINARY`, `DEFAULTS_SCRIPT` und der Aufruf von `png-to-lcd.py`) werden außerdem aus `PROJECT_DIR / "src" / ...` beziehungsweise `PROJECT_DIR / "scripts" / ...` gebildet. Würde die Struktur wie bei `g910-control` abgeflacht, würden alle diese Pfade stillschweigend falsch aufgelöst – `PROJECT_DIR` läge dann zum Beispiel unter `/usr/lib` statt `/usr/lib/g510-lcd`. Da diese Arbeit keine entsprechende Änderung am Quellcode vorgenommen hat, bleibt die bekannte Verzeichnisstruktur unter einem festen Stammverzeichnis erhalten. So funktioniert die bereits getestete Pfadlogik unverändert, statt einen neuen, ungeprüften Codepfad einzuführen.
 
-## Resolved: the udev rule's backlight-restore line
+## Behoben: Wiederherstellen der Beleuchtung über die udev-Regel
 
-`99-g510-lcd.rules` has four jobs: create `/dev/g510-lcd` and
-`/dev/g510-keys` symlinks (both genuinely load-bearing --
-`g510_lcd_stats.c`/`g510_lcd_buttons.c` hard-`fopen()` those exact
-paths and fail outright without them), fix LED sysfs permissions, and
-restore the last-applied backlight color on every hotplug.
+`99-g510-lcd.rules` erfüllt vier Aufgaben: Sie erstellt die symbolischen Verknüpfungen `/dev/g510-lcd` und `/dev/g510-keys` (beide sind zwingend erforderlich, da `g510_lcd_stats.c` und `g510_lcd_buttons.c` genau diese Pfade mit `fopen()` öffnen und andernfalls fehlschlagen), korrigiert die Berechtigungen des LED-sysfs-Eintrags und stellt bei jedem Hotplug die zuletzt gewählte Beleuchtungsfarbe wieder her.
 
-That last job used to shell out to a `__PROJECT_DIR__`-substituted
-script, which couldn't work for a package (udev fires as root with no
-per-user `$HOME` to resolve). Fixed properly, not dropped:
-`scripts/restore-backlight.sh` is a small, install-mode-agnostic
-wrapper -- at hotplug time it asks `loginctl` which user actually has
-the active `seat0` session (this is genuinely single-seat desktop
-hardware; broader multi-user handling is out of scope), resolves
-their `$HOME` via `getent passwd`, and execs their own
-`~/.local/share/g510-lcd/set-backlight-color.sh`. Zero `PROJECT_DIR`
-dependency, so both `install.sh` and this PKGBUILD install the exact
-same file to the exact same fixed path
-(`/usr/lib/g510-lcd/restore-backlight.sh`) -- the udev rule itself
-needed no substitution or stripping either way anymore, installed
-byte-identical to the checked-in source.
+Die letzte Aufgabe rief früher ein Skript mit eingesetztem `__PROJECT_DIR__` auf. Bei einem Paket hätte das nicht funktioniert: udev läuft als Root und kann kein benutzerspezifisches `$HOME` ermitteln. Die Funktion wurde korrekt repariert und nicht entfernt. `scripts/restore-backlight.sh` ist ein installationsartunabhängiger Starter: Beim Hotplug fragt er `loginctl` ab, welcher Benutzer eine aktive `seat0`-Sitzung hat (die Hardware ist ein Desktop-Rechner mit einem Sitzplatz; eine allgemeinere Mehrbenutzerbehandlung gehört nicht zum Umfang), ermittelt dessen `$HOME` mit `getent passwd` und führt dessen `~/.local/share/g510-lcd/set-backlight-color.sh` aus.
 
-Verified for real, not just read: ran the script directly on the real
-machine (`bash -x`, full trace) -- correctly resolved the real
-logged-in user, found their real saved color script, executed it, and
-the LED sysfs state matched afterward. This is the same mechanism a
-real hotplug event would trigger, just invoked manually instead of
-waiting for a physical replug.
+Das Skript benötigt kein `PROJECT_DIR`. Sowohl `install.sh` als auch das PKGBUILD installieren deshalb dieselbe Datei am selben festen Pfad (`/usr/lib/g510-lcd/restore-backlight.sh`). Auch die udev-Regel muss weder ersetzt noch bereinigt werden und wird bytegenau wie die Quelldatei installiert.
 
-One minor, honest wrinkle: on a machine with both install methods
-present (like this one, right now), `/usr/lib/g510-lcd/` is a path
-`pacman` considers package-owned once this PKGBUILD is installed --
-`install.sh`'s own `sudo cp` into that same path writes outside
-`pacman`'s bookkeeping. Harmless in practice (both methods copy the
-exact same file content), but worth knowing before treating
-`pacman -Qkk g510-lcd` as gospel on a machine that's also run
-`install.sh`.
+Die Prüfung erfolgte auf dem echten Rechner und nicht nur durch Lesen: Das Skript wurde direkt mit vollständiger Ablaufverfolgung (`bash -x`) ausgeführt. Es ermittelte den angemeldeten Benutzer und dessen gespeichertes Farbschema korrekt, führte das Skript aus und bestätigte anschließend den passenden Zustand des LED-sysfs-Eintrags. Das entspricht dem Mechanismus eines echten Hotplug-Ereignisses, wurde aber manuell ausgelöst, statt auf ein physisches erneutes Anstecken zu warten.
 
-## Resolved: the label font
+Ein kleiner, aber wichtiger Hinweis: Wenn beide Installationsarten gleichzeitig vorhanden sind (wie derzeit auf diesem Rechner), betrachtet `pacman` `/usr/lib/g510-lcd/` nach Installation dieses PKGBUILD als paketverwaltet. Das `sudo cp` von `install.sh` in denselben Pfad verändert dann Dateien außerhalb der pacman-Verwaltung. In der Praxis ist das unproblematisch, weil beide Verfahren dieselben Dateien kopieren. Trotzdem sollte `pacman -Qkk g510-lcd` auf einem Rechner, auf dem auch `install.sh` ausgeführt wurde, nicht als alleinige Wahrheitsquelle behandelt werden.
 
-Same restriction `install.sh` already documents -- Eurostile Bold is
-commercially licensed and can't be redistributed in the package, so
-`g510_lcd_stats` still refuses to start without a converted copy
-somewhere. What's fixed: it now checks
-`~/.local/share/g510-lcd/fonts/lcd-label-8.fnt` (always user-writable,
-regardless of install mode) *before* falling back to the old
-`PROJECT_DIR`-relative path -- so the manual conversion step for a
-packaged install no longer needs `sudo`, matching the git-clone flow's
-convenience exactly.
+## Behoben: Beschriftungsschriftart
 
-Verified for real, in stages: rebuilt the binary with the fix,
-confirmed all three isolated scenarios (font only in the old location,
-font only in the new location, font in neither) behave exactly as
-designed -- including the failure case still producing the same clear
-error message, not some new unexpected one. Separately, against the
-*actual installed package* on the real machine (installed before this
-fix existed): it failed with the documented message, exactly as
-predicted, since its compiled binary still only knew the old
-`PROJECT_DIR`-only lookup. Copied the real converted font into
-`~/.local/share/g510-lcd/fonts/` for real (plain user-level file copy,
-no sudo) -- ready for whenever the package is rebuilt with this fix
-and reinstalled, which hadn't happened yet as of this note. The fixed
-package itself was rebuilt and content-verified the same way as the
-rest of this file describes, but **reinstalling it on the real machine
-to pick up this exact fix is still a pending step**, not done as part
-of this pass.
+Es gilt dieselbe Einschränkung wie bei `install.sh`: Eurostile Bold ist kommerziell lizenziert und darf nicht im Paket weitergegeben werden. `g510_lcd_stats` benötigt weiterhin eine konvertierte Kopie an einem passenden Ort. Die Anwendung prüft jetzt zuerst `~/.local/share/g510-lcd/fonts/lcd-label-8.fnt` – unabhängig von der Installationsart ein benutzerschreibbarer Pfad – und greift erst danach auf den alten Pfad relativ zu `PROJECT_DIR` zurück. Bei einer Paketinstallation benötigt die manuelle Konvertierung somit kein `sudo`; sie ist genauso unkompliziert wie bei einem geklonten Repository.
 
-## What's actually been verified this pass
+Die Überprüfung erfolgte schrittweise: Nach dem Neubau des Programms wurden alle drei isolierten Fälle geprüft – Schriftart nur am alten Pfad, nur am neuen Pfad oder an keinem der beiden Orte. Alle verhielten sich wie vorgesehen; auch im Fehlerfall erschien weiterhin dieselbe verständliche Meldung. Zusätzlich wurde die auf dem echten Rechner installierte Paketversion geprüft, die vor dieser Korrektur erstellt worden war: Sie schlug erwartungsgemäß mit der dokumentierten Meldung fehl, da ihr kompiliertes Programm nur den alten `PROJECT_DIR`-Pfad kannte. Die konvertierte Schrift wurde anschließend ohne `sudo` nach `~/.local/share/g510-lcd/fonts/` kopiert. Damit ist sie bereit, sobald das mit der Korrektur neu erstellte Paket installiert wird – das war zum Zeitpunkt dieser Notiz noch nicht geschehen.
 
-1. `makepkg` against a real tarball -- both a manually-assembled one
-   from the live working tree (for fast iteration while fixing a real
-   bug below) and a genuine `git archive` of the `g510s-dev` branch
-   HEAD (matching how `g910-control`'s README describes its own
-   process, since neither app has a real public tag yet this can
-   build from a real URL). Builds clean, no warnings.
-2. Extracted the built `.pkg.tar.zst` and checked every substituted
-   file by hand: the `/usr/bin/g510-lcd` wrapper, all three systemd
-   service `ExecStart=` lines, and the udev rule (now installed
-   byte-identical to source, confirmed via `diff`, not just "should
-   match").
-3. Confirmed the compiled `g510_lcd_stats` binary really has
-   `/usr/lib/g510-lcd` baked in (`strings` on the binary).
-4. Grepped every file in the built package (not just the source tree)
-   for personal identifiers -- clean, except `.BUILDINFO`'s
-   `builddir`/`startdir` fields, which record wherever a build
-   happened to run (this test ran from a scratch directory under the
-   user's home). Not a PKGBUILD defect -- a real AUR build (or even
-   just building from `/tmp`) wouldn't show this; noted for honesty,
-   not left silently unmentioned.
-5. **Real install, done for real**: `sudo pacman -U`, run by the user
-   directly. Confirmed afterward: `systemctl --user show
-   g510-lcd-stats.service -p FragmentPath` still resolves to
-   `~/.config/systemd/user/g510-lcd-stats.service` (the git-clone
-   version), and its `MainPID` was unchanged before and after the
-   install -- the packaged service files, udev rule, and everything
-   else installed alongside without disrupting anything live, exactly
-   as designed. This package has no `.install` hook (`pacman -Qi
-   g510-lcd` shows `Install Script: No`), so `pacman -U` never touched
-   systemd enablement at all -- the packaged services were neither
-   started nor enabled by the install itself, and actually starting
-   them (which would require temporarily removing the `~/.config`
-   override so the packaged unit wins) to prove the packaged binaries
-   work end-to-end wasn't done this pass.
+Das korrigierte Paket wurde wie der übrige Inhalt dieser Datei neu erstellt und inhaltlich überprüft. **Die Installation dieses konkreten Pakets auf dem echten Rechner, um genau diese Korrektur zu übernehmen, steht aber noch aus.**
 
-## What's still genuinely pending (honest, not glossed over)
+## Was in diesem Durchlauf tatsächlich überprüft wurde
 
-- **The font and backlight-restore fixes above exist in a rebuilt,
-  isolated-tested package** -- but the package actually installed on
-  the real machine right now predates both fixes. Reinstalling
-  (`sudo pacman -U` again, on the newly rebuilt `.pkg.tar.zst`) is
-  needed to bring the real install up to date -- not done as part of
-  this exact pass, since it's the same class of action that needed the
-  user directly the first time.
-- **Starting the packaged services for a true end-to-end run** (LCD
-  screen, buttons, macros actually working from `/usr/lib/g510-lcd/`,
-  not just the binary answering to `--preview`) -- not attempted, to
-  avoid any chance of disrupting the live dev-checkout services while
-  testing.
-- **`namcap`** -- not installed on this machine, lint step skipped
-  entirely rather than assumed clean.
-- **`sha256sums=SKIP`** -- same private-repo/no-public-tag situation
-  documented in `G510_PLAN_A.md`'s Phase 4 section. Must become a real
-  sum before any AUR submission.
+1. `makepkg` wurde mit einem echten Tarball ausgeführt: zunächst mit einem für schnelle Iterationen manuell aus dem Arbeitsverzeichnis erstellten Tarball, während unten ein echter Fehler behoben wurde, und anschließend mit einem echten `git archive` des HEADs von `g510s-dev`. Letzteres entspricht dem in der README von `g910-control` beschriebenen Verfahren; da keine der Anwendungen ein echtes öffentliches Tag hat, lässt sich so trotzdem aus einer realen Quelle bauen. Beide Builds liefen ohne Fehler oder Warnungen.
+2. Das erstellte `.pkg.tar.zst` wurde entpackt und alle Dateien mit eingesetzten Pfaden manuell geprüft: der Starter `/usr/bin/g510-lcd`, die `ExecStart=`-Zeilen aller drei systemd-Dienste und die udev-Regel. Letztere ist jetzt bytegenau mit der Quelle identisch; das wurde mit `diff` bestätigt.
+3. `strings` bestätigte, dass das kompilierte `g510_lcd_stats` den Pfad `/usr/lib/g510-lcd` enthält.
+4. Alle Dateien im erstellten Paket (nicht nur der Quellcode) wurden auf persönliche Kennungen geprüft. Einzige Treffer waren die Felder `builddir` und `startdir` in `.BUILDINFO`, die den Buildspeicherort festhalten. Dieser Build lief in einem temporären Verzeichnis unter dem Home-Verzeichnis des Benutzers. Das ist kein Fehler im PKGBUILD: Ein echter AUR-Build oder ein Build unter `/tmp` würde diese Angaben nicht enthalten. Der Umstand ist der Vollständigkeit halber dokumentiert.
+5. **Die echte Installation wurde durchgeführt:** Der Benutzer selbst führte `sudo pacman -U` aus. Danach zeigte `systemctl --user show g510-lcd-stats.service -p FragmentPath` weiterhin auf `~/.config/systemd/user/g510-lcd-stats.service` (die Version aus dem geklonten Repository). Auch die `MainPID` war vor und nach der Installation unverändert. Die Paketdateien – Dienstdateien, udev-Regel und weitere Bestandteile – wurden also wie vorgesehen installiert, ohne die laufende Umgebung zu stören. Das Paket enthält kein `.install`-Hook (`pacman -Qi g510-lcd` zeigt `Install Script: No`), daher hat `pacman -U` die systemd-Aktivierung nicht verändert. Die Paketdienste wurden durch die Installation weder gestartet noch aktiviert. Sie für einen vollständigen Funktionstest zu starten, hätte vorübergehend das `~/.config`-Override entfernen müssen und wurde deshalb in diesem Durchlauf nicht getan.
 
-## Before real AUR submission (not done, needs the user's go-ahead)
+## Was noch wirklich aussteht
 
-- Reinstall with the font/backlight fixes and do the true end-to-end
-  service run above.
-- Make the source repo public, compute a real `sha256sum`.
-- Generate `.SRCINFO` (`makepkg --printsrcinfo > .SRCINFO`).
-- Push to a dedicated `aur.archlinux.org` git remote.
+- **Die Korrekturen für Schriftart und Wiederherstellung der Beleuchtung** sind in einem neu gebauten, isoliert getesteten Paket enthalten. Das aktuell auf dem echten Rechner installierte Paket ist jedoch älter und enthält beide Korrekturen nicht. Es muss mit `sudo pacman -U` erneut installiert werden, damit die reale Installation aktualisiert wird. Dieser Schritt wurde in diesem Durchlauf nicht vorgenommen, da er dieselbe direkte Benutzeraktion erfordert hatte wie die erste Installation.
+- **Die Paketdienste vollständig starten und durchtesten** – LCD, Tasten und Makros müssen tatsächlich aus `/usr/lib/g510-lcd/` funktionieren, nicht nur auf den Aufruf von `--preview` reagieren. Dieser Test wurde ausgelassen, damit die laufenden Entwicklungsdienste nicht versehentlich gestört werden.
+- **`namcap`** ist auf diesem Rechner nicht installiert. Der Prüfschritt wurde daher ausgelassen und nicht einfach als fehlerfrei angenommen.
+- **`sha256sums=SKIP`** ist vorläufig wegen der privaten Quelle und des fehlenden öffentlichen Tags gesetzt; derselbe Umstand ist in `G510_PLAN_A.md`, Phase 4, dokumentiert. Vor jeder AUR-Einreichung muss ein echter Prüfsummenwert eingetragen werden.
+
+## Vor einer echten AUR-Einreichung
+
+Diese Schritte wurden noch nicht ausgeführt und benötigen die Zustimmung des Benutzers:
+
+- Das Paket mit den Korrekturen für Schriftart und Beleuchtungswiederherstellung erneut installieren und den vollständigen Diensttest durchführen.
+- Das Quellcode-Repository öffentlich machen und eine echte `sha256sum` berechnen.
+- `.SRCINFO` mit `makepkg --printsrcinfo > .SRCINFO` erstellen.
+- Zu einem eigenen Git-Remote unter `aur.archlinux.org` pushen.
