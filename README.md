@@ -1,142 +1,92 @@
-# Logitech G510s software
+# Logitech G510s – Software
 
-![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
+![Lizenz: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python](https://img.shields.io/badge/python-3-blue.svg)
-![Platform: Arch Linux](https://img.shields.io/badge/platform-Arch%20Linux-1793d1.svg)
-![G510s: work in progress](https://img.shields.io/badge/G510s-work%20in%20progress-orange.svg)
+![Plattform: Arch Linux](https://img.shields.io/badge/platform-Arch%20Linux-1793d1.svg)
+![G510s: in Entwicklung](https://img.shields.io/badge/G510s-in%20Entwicklung-orange.svg)
 
-**A from-scratch Linux driver + GUI for the Logitech G510s** — the LCD
-screen, backlight, and G-key macros, properly working. Logitech's own
-software is Windows-only and everything else out there is old,
-abandoned, or half-broken, so this talks to the keyboard's real
-USB/HID traffic directly instead.
+**Ein von Grund auf entwickelter Linux-Treiber mit grafischer Oberfläche für die Logitech G510s** – mit funktionierendem LCD, Hintergrundbeleuchtung und G-Tasten-Makros. Logitechs eigene Software gibt es nur für Windows; andere Lösungen sind veraltet, verlassen oder unvollständig. Dieses Projekt kommuniziert deshalb direkt mit dem USB-/HID-Protokoll der Tastatur.
 
-## Download & Install
+## Herunterladen und installieren
 
-```
+```sh
 git clone https://github.com/grumpybollocks/Logitech-G510s-LCD-control.git
 cd Logitech-G510s-LCD-control
 ./install.sh
 ```
 
-`install.sh` sorts out every dependency (reporting exactly what's
-already installed vs. what it's about to add — never a silent
-black-box `pacman` run), builds the LCD driver, converts the label
-font, wires up the systemd services, and adds desktop shortcuts. Safe
-to re-run any time. You'll be asked for your `sudo` password once (for
-the udev rules and package installs), and to unplug/replug the
-keyboard partway through so those rules actually take effect.
+`install.sh` kümmert sich um alle Abhängigkeiten. Das Skript meldet jeweils, was bereits installiert ist und was noch hinzukommt – `pacman` wird nie still im Hintergrund ausgeführt. Außerdem baut es den LCD-Treiber, konvertiert die Beschriftungsschriftart, richtet die systemd-Dienste ein und erstellt Desktop-Verknüpfungen. Das Skript kann gefahrlos erneut ausgeführt werden. Einmalig werden das `sudo`-Passwort (für udev-Regeln und Paketinstallationen) und das Ab- und erneute Anstecken der Tastatur benötigt, damit die Regeln wirksam werden.
 
-Everything it installs, and why:
+Installierte Pakete und ihre Aufgaben:
 
-| Package | What it's for |
+| Paket | Verwendung |
 | --- | --- |
-| `python-pyqt5`, `python-pillow`, `python-evdev` | the GUI, image import, keyboard-event reading |
-| `ydotool` | macro keystroke replay — ships its own `uinput` udev rule and `ydotool.service` |
-| `freetype2` | renders the LCD's custom label font |
-| `zenity` | the little "restarted" confirmation popup from the Start shortcut |
-| `playerctl` | reads now-playing song/artist/elapsed time for the media sensors |
-| `libg15`, `libg15render` (AUR, via `yay`/`paru`) | the actual LCD pixel-format library this whole project is built on |
+| `python-pyqt5`, `python-pillow`, `python-evdev` | Grafische Oberfläche, Bildimport und Auslesen von Tastaturereignissen |
+| `ydotool` | Wiedergabe von Makro-Tastenanschlägen; bringt eine eigene `uinput`-udev-Regel und `ydotool.service` mit |
+| `freetype2` | Darstellung der benutzerdefinierten LCD-Schriftart |
+| `zenity` | Bestätigungsdialog beim Neustart über die Desktop-Verknüpfung |
+| `playerctl` | Titel, Interpret und Laufzeit des aktuell wiedergegebenen Mediums für die Mediensensoren |
+| `libg15`, `libg15render` (AUR, über `yay`/`paru`) | Bibliothek für das Pixel- und Bildformat des LCDs |
 
-An AUR helper (`yay` or `paru`) is the one thing `install.sh` can't
-install for you — grab one first if you don't already have one, then
-run `install.sh`.
+`install.sh` kann keinen AUR-Helfer installieren. Installiere zuerst `yay` oder `paru`, falls noch keiner vorhanden ist, und führe danach `install.sh` aus.
 
-**Verifying it worked:**
+**Installation überprüfen:**
 
-```
+```sh
 systemctl --user status g510-lcd-stats.service g510-lcd-buttons.service g510-macro-daemon.service
 ```
 
-All three should say `active (running)`. If the LCD doesn't light up
-straight away, unplug and replug the keyboard once.
+Alle drei Dienste sollten `active (running)` anzeigen. Falls das LCD nicht sofort aufleuchtet, trenne die Tastatur kurz vom Rechner und schließe sie wieder an.
 
-**What you get:**
-- Live CPU / RAM / VRAM / TEMP stats on the built-in LCD
-- Full RGB backlight colour control
-- G-key macros across M1 / M2 / M3 profiles
-- Custom Screens dashboard builder — drag sensors, images, and text
-  onto L2-L5, plus a live analog clock on L1
-- A little Winamp on your keyboard — bouncing equalizer bars for
-  whatever's playing, plus the song title, artist, and elapsed time
-- Runs as your normal user, starts at login, shrugs off reboots —
-  no root faffing about
+**Enthaltene Funktionen:**
 
-![G510s Control app — v1](docs/screenshots/g510s-control-v1.png)
+- Live-Anzeige von CPU, RAM, VRAM und Temperatur auf dem eingebauten LCD
+- Vollständige RGB-Steuerung der Tastaturbeleuchtung
+- G-Tasten-Makros mit den Profilen M1, M2 und M3
+- Editor für eigene Bildschirme: Sensoren, Bilder und Text auf L2–L5 platzieren; L1 zeigt zusätzlich eine analoge Uhr
+- Kleiner Winamp auf der Tastatur: animierte Equalizer-Balken sowie Titel, Interpret und Laufzeit des aktuell wiedergegebenen Mediums
+- Läuft ohne Root-Rechte unter dem normalen Benutzerkonto, startet bei der Anmeldung und übersteht Neustarts
 
-## The audio visualizer
+![G510s-Steuerungsanwendung – v1](docs/screenshots/g510s-control-v1.png)
 
-Drop a visualizer onto any of the L2-L5 screens and the LCD turns into
-a tiny live equalizer — bars that actually bounce to the music,
-alongside the song title, artist, and a running "1:23 / 3:45" clock.
+## Audio-Visualisierung
 
-It doesn't hook into Spotify, or your browser, or any app in
-particular — it just listens to whatever's coming out of your
-speakers, the same way a physical VU meter would. That means it works
-identically with Spotify, YouTube in a browser tab, VLC, a game,
-literally anything, with nothing to configure and nothing that can
-fall out of sync with "what app is currently playing." Resize it like
-any other element and it fills the extra space with more bars, not
-just bigger ones.
+Platziere einen Visualizer auf einem der Bildschirme L2–L5. Das LCD zeigt dann einen kleinen Live-Equalizer mit zum Musiksignal ausschlagenden Balken sowie Titel, Interpret und Laufzeit.
 
-## How it works
+Der Visualizer greift nicht gezielt auf Spotify, den Browser oder eine bestimmte Anwendung zu. Stattdessen erfasst er den Ton, der gerade über die Lautsprecher ausgegeben wird. Dadurch funktioniert er gleichermaßen mit Spotify, YouTube im Browser, VLC, Spielen und anderen Anwendungen – ohne zusätzliche Konfiguration und ohne Synchronisationsprobleme mit der gerade aktiven Anwendung. Die Größe lässt sich wie bei jedem anderen Element ändern; zusätzlicher Platz zeigt mehr Balken statt nur größere Balken.
 
-A PyQt5 app (`g510_app.py`) talks straight to `/dev/g510-lcd` and
-`/dev/g510-keys` — proper stable symlinks, not flaky device numbers —
-instead of relying on `g15daemon`, which gets this keyboard's key
-mappings wrong. Runs quietly as three systemd `--user` services.
+## Funktionsweise
 
-## Status
+Die PyQt5-Anwendung `g510_app.py` kommuniziert direkt mit `/dev/g510-lcd` und `/dev/g510-keys`. Sie verwendet stabile symbolische Verknüpfungen statt unzuverlässiger Gerätenummern und ist nicht auf `g15daemon` angewiesen, dessen Tastenzuordnungen für dieses Modell falsch sind. Die Anwendung läuft unauffällig als drei systemd-Dienste des Benutzers.
 
-- **Public** on GitHub.
-- **`main`**: tagged `v1.0` (LCD stats, backlight, G-key macros) —
-  stable, confirmed. Analog clock, Custom Screens polish, and several
-  real bug fixes have since merged on top, physically confirmed
-  working on the real keyboard.
-- **`g510s-dev`**: active work, merges to `main` only once it's
-  physically confirmed on the real keyboard — standing rule, not a
-  delay.
-- Not on the AUR — not currently being pursued.
+## Projektstatus
 
-## Not the repo you're after?
+- **Öffentlich** auf GitHub.
+- **`main`**: mit `v1.0` markiert (LCD-Statistiken, Beleuchtung und G-Tasten-Makros) – stabil und bestätigt. Die analoge Uhr, Verbesserungen an den eigenen Bildschirmen und mehrere echte Fehlerkorrekturen sind inzwischen hinzugekommen und wurden an der realen Tastatur überprüft.
+- **`g510s-dev`**: aktive Entwicklung. Änderungen werden erst nach einer Bestätigung an der realen Tastatur in `main` übernommen – das ist eine feste Regel, keine Verzögerung.
+- Nicht im AUR; eine Veröffentlichung dort wird derzeit nicht verfolgt.
 
-This used to also hold a separate app for the Logitech **G910** —
-different keyboard, different codebase. That's fully moved out to
-[grumpybollocks/g910-control](https://github.com/grumpybollocks/g910-control),
-already ahead of anything that was ever here. Every G910 branch and
-tag has also been removed from this repo (see [`BRANCHES.md`](BRANCHES.md)
-for the full history) — no G910 *file*, branch, or tag has lived on
-`main` since 2026-09-17.
+## Suchst du ein anderes Projekt?
 
-## Docs
+Dieses Repository enthielt früher auch eine separate Anwendung für die Logitech **G910** – eine andere Tastatur mit einer anderen Codebasis. Sie wurde vollständig nach [grumpybollocks/g910-control](https://github.com/grumpybollocks/g910-control) verschoben und ist dort bereits weiterentwickelt. Alle G910-Branches und -Tags wurden ebenfalls aus diesem Repository entfernt (siehe [`BRANCHES.md`](BRANCHES.md) zur vollständigen Geschichte). Seit dem 17.09.2026 befinden sich keine G910-Dateien, -Branches oder -Tags mehr in `main`.
 
-- [`G510_README.md`](G510_README.md) — the full story: protocol
-  details, every bug hit and fixed, font conversion, udev rules.
-- [`G510_CUSTOM_SCREENS_HOWTO.md`](G510_CUSTOM_SCREENS_HOWTO.md) — how
-  to actually use the Custom Screens editor.
+## Dokumentation
+
+- [`G510_README.md`](G510_README.md) – technischer Überblick: Protokoll, behobene Fehler, Schriftkonvertierung und udev-Regeln.
+- [`G510_CUSTOM_SCREENS_HOWTO.md`](G510_CUSTOM_SCREENS_HOWTO.md) – Anleitung zum Editor für eigene Bildschirme.
 
 ---
 
-## The cheeky bits
+## Kleine Geschichten am Rande
 
-A few things that happened along the way worth a mention, because
-they're the kind of detail that makes a "personal project" actually
-personal:
+Ein paar Dinge aus der Entwicklung, die das Projekt persönlicher machen:
 
-- The app can show free space on a second drive over its LCD like any
-  other sensor, on request — fully optional, shows "N/A" gracefully on
-  any setup that doesn't have one.
-- This started out alongside a sibling app for the Logitech G910 (see
-  "Not the repo you're after?" above) before the split. That history
-  predates the split and lives on in this repo's own commit log even
-  though the G910 app's files themselves have moved on.
-- "wtf are the blue squares for?" is a genuine, verbatim piece of user
-  feedback that shipped an actual UI fix (resize handles now only show
-  up when you're hovering near them, not all at once) — which is as
-  good a reminder as any that real usage beats guessing every time.
+- Auf Wunsch kann die Anwendung freien Speicherplatz auf einem zweiten Laufwerk als Sensor anzeigen. Die Funktion ist optional und zeigt auf Systemen ohne ein solches Laufwerk korrekt „N/A“ an.
+- Das Projekt begann neben einer Schwesteranwendung für die Logitech G910 (siehe „Suchst du ein anderes Projekt?“). Diese gemeinsame Vorgeschichte ist noch im Commit-Verlauf dieses Repositorys sichtbar, obwohl die G910-Dateien inzwischen verschoben wurden.
+- „wtf are the blue squares for?“ war echtes, wörtliches Feedback, das eine konkrete Änderung an der Oberfläche ausgelöst hat: Ziehpunkte zum Ändern der Größe erscheinen jetzt erst, wenn sich der Mauszeiger in ihrer Nähe befindet. Ein gutes Beispiel dafür, warum echte Nutzung besser ist als bloßes Raten.
 
 ---
 
-## License
+## Lizenz
 
 [MIT](LICENSE).

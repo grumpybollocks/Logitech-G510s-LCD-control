@@ -1,126 +1,53 @@
-# Custom Screens — How to Use It
+# Eigene Bildschirme – Kurzanleitung
 
-The "LCD Screens" tab lets you build your own little dashboards for
-the L2-L5 buttons on the keyboard. Here's the whole thing, short version.
+Im Tab **LCD Screens** kannst du eigene Übersichten für die Tasten L2–L5 erstellen. Hier findest du die wichtigsten Schritte.
 
-## The basics
+## Grundlagen
 
-1. **Pick a screen** — click L1, L2, L3, L4, or L5 at the top.
-   - **L1 is a live preview, not editable.** It's the built-in clock —
-     pressing the physical L1 button on the keyboard cycles it between
-     the clock and the CPU/RAM/VRAM/TEMP stats screen, same as it
-     always has. This tab just mirrors whichever of those two is
-     currently showing so you can see it without reaching for the
-     keyboard; the Add/Import controls are disabled here (hover them
-     for a tooltip explaining why) since there's nothing to edit.
-   - **L2-L5 are yours.** Add whatever you want to these. An empty
-     screen just shows blank — nothing to clear out first.
+1. **Bildschirm auswählen** – Klicke oben auf L1, L2, L3, L4 oder L5.
+   - **L1 ist eine Vorschau und nicht bearbeitbar.** Dort wird die eingebaute Uhr angezeigt. Mit der physischen L1-Taste an der Tastatur wechselst du wie gewohnt zwischen Uhr und CPU-/RAM-/VRAM-/Temperaturanzeige. Der Tab zeigt jeweils den aktuellen Inhalt, damit du nicht zur Tastatur greifen musst. Hinzufügen und Importieren sind hier deaktiviert; der Mauszeiger erklärt per Tooltip den Grund.
+   - **L2–L5 kannst du frei gestalten.** Ein leerer Bildschirm bleibt einfach leer – du musst vorher nichts löschen.
 
-2. **Add a sensor** — pick one (CPU %, RAM, GPU temp, whatever) from
-   the first dropdown, pick **Number** (just shows the value) or
-   **Bar** (shows a bar + the value), choose horizontal or vertical
-   orientation for bars, then click **Add**. Vertical bars show a
-   short label above the bar; the CPU cores use compact labels such as
-   C1 through C8 by default.
+2. **Sensor hinzufügen** – Wähle im ersten Auswahlfeld einen Sensor (zum Beispiel CPU-Auslastung, RAM oder GPU-Temperatur). Wähle **Number** für eine reine Zahlenanzeige oder **Bar** für einen Balken mit Zahlenwert. Für Balken kannst du außerdem eine waagerechte oder senkrechte Ausrichtung einstellen. Klicke anschließend auf **Add**. Senkrechte Balken zeigen ein kurzes Label über dem Balken; die CPU-Kerne verwenden standardmäßig kompakte Labels wie C1 bis C8.
 
-3. **Add text** — click **Add Text...**, type whatever you want (a
-   label, a name, anything static), and it lands on the preview like
-   any other element. Up to 4 text fields per screen.
+3. **Text hinzufügen** – Klicke auf **Add Text...**, gib den gewünschten festen Text ein (zum Beispiel eine Beschriftung oder einen Namen) und füge ihn wie jedes andere Element zur Vorschau hinzu. Pro Bildschirm sind bis zu vier Textfelder möglich.
 
-4. **Move it** — click and drag it around on the preview, right where
-   you see it. Wherever you drop it is where it'll show up on the real
-   keyboard screen.
+4. **Element verschieben** – Ziehe es mit der Maus an die gewünschte Stelle in der Vorschau. Dort wird es auch auf dem Tastaturdisplay erscheinen.
 
-5. **Put an image on it** — click **Import Image...**, pick a picture
-   from your computer, and it gets shrunk down and converted
-   automatically to fit the tiny black-and-white screen. Drag it around
-   like anything else.
+5. **Bild hinzufügen** – Klicke auf **Import Image...** und wähle ein Bild auf deinem Rechner aus. Es wird automatisch verkleinert und für das kleine Schwarz-Weiß-Display umgewandelt. Anschließend kannst du es wie jedes andere Element verschieben.
 
-6. **Resize a bar or an image** — hover your mouse near a bar's right
-   end, or an image's bottom-right corner, and a little blue square
-   appears. Drag that to make it bigger or smaller.
+6. **Balken oder Bild skalieren** – Bewege den Mauszeiger nahe an das rechte Ende eines Balkens oder an die rechte untere Ecke eines Bildes. Ein kleines blaues Quadrat erscheint. Ziehe es, um die Größe anzupassen.
 
-7. **Resize a number or a text field** — these are just text, and the
-   screen's tiny built-in fonts don't stretch smoothly, so there's no
-   drag handle. Instead, pick a size (Small/Medium/Large/Huge) from
-   the **Text Size** dropdown before adding one, or click the size
-   button (e.g. "Small") next to an existing one in the list on the
-   right to cycle through the sizes. Sensor labels and their values
-   use the same selected size.
+7. **Zahlen oder Text skalieren** – Diese Elemente bestehen aus Text; die kleinen eingebauten Display-Schriften lassen sich nicht stufenlos vergrößern. Deshalb gibt es dafür keinen Ziehpunkt. Wähle vor dem Hinzufügen im Auswahlfeld **Text Size** eine Größe (Small/Medium/Large/Huge). Bei bereits vorhandenen Elementen kannst du über die Schaltfläche neben dem jeweiligen Eintrag rechts durch die Größen wechseln. Sensor-Labels und ihre Werte verwenden dieselbe Größe.
 
-8. **Remove something** — click the ✕ next to it in the list on the
-   right.
+8. **Element entfernen** – Klicke rechts in der Liste neben dem Element auf **✕**.
+9. **Anzeigenamen ändern** – Bearbeite in **Elements on this screen** das Textfeld neben einem Sensor- oder Textelement und drücke Enter. Der Name wird mit dem Bildschirm gespeichert und erscheint in der Vorschau und auf der Tastatur. Temperatursensoren haben kompakte Standardnamen wie **CPU** und **GPU** (z. B. `CPU 32°C`, `GPU 45°C`); sie lassen sich einzeln ändern.
 
-9. **Change an element's display name** — edit the text field next to
-   a sensor or text element in **Elements on this screen**, then press
-   Enter. The custom label is saved with the screen and appears in the
-   live preview and on the keyboard. Temperature sensors default to
-   compact names such as **CPU** and **GPU**, so they read e.g.
-   `CPU 32°C` and `GPU 45°C`; these names can be changed independently.
+10. **Datums- und Zeitformat wählen** – Bei **Date** und **Time** wählst du das Format über die kompakte Auswahl in der Zeile. Sie ersetzt das Label-Feld, da Datum und Uhrzeit ohne Label angezeigt werden. Es werden nur unterstützte Formate angeboten; die Wahl wird pro Bildschirm gespeichert und die Vorschau aktualisiert sich sofort.
 
-10. **Choose date and time formats** — for a **Date** or **Time**
-    element, use the compact format selector in its row. This replaces
-    the LCD-label field because Date and Time are displayed without a
-    label; the selector keeps the row the same height as the other
-    elements. Only supported presets are offered, and the choice is
-    saved with that screen. The preview updates immediately when you
-    choose another format.
+11. **Mit einer Dashboard-Vorlage starten** – Wähle **CPU / GPU performance**, **Temperature overview** oder **System overview** und klicke auf **Apply layout preset...**. Der gewählte Bildschirm L2–L5 wird nach Bestätigung ersetzt; die erzeugten Elemente kannst du danach wie gewohnt verschieben, umbenennen oder entfernen.
 
-11. **Start from a dashboard preset** — choose **CPU / GPU
-    performance**, **Temperature overview**, or **System overview** and
-    click **Apply layout preset...**. The selected L2-L5 screen is
-    replaced after confirmation; you can then move, rename, or remove
-    the generated elements as usual.
+Das war's. Eine **Speichern**-Schaltfläche gibt es nicht: Jede Änderung (Verschieben, Skalieren, Hinzufügen oder Entfernen) wird sofort gespeichert.
 
-That's it. **Nothing needs a Save button** — every change (move,
-resize, add, remove) saves itself instantly.
+## Wissenswertes
 
-## Things worth knowing
+- **Das Display ist klein:** 160 × 43 Pixel, genau wie das echte LCD. Bei zu vielen Elementen können sich Zeilen überlappen oder am unteren Rand abgeschnitten werden. Die Vorschau entspricht der echten Anzeige. Wenn etwas in der Anwendung falsch aussieht, sieht es auch auf der Tastatur falsch aus – lass genügend Abstand.
+- **Für jeden Elementtyp gilt ein eigenes Limit pro Bildschirm:** 16 Sensoren, 2 Bilder und 4 Textfelder. Das sind keine gemeinsamen Gesamtlimits: Ein Bildschirm kann also gleichzeitig 16 Sensoren, 2 Bilder und 4 Textfelder enthalten. Die Anwendung meldet, wenn eines der Limits erreicht ist.
+- **Nicht jeder Sensor kann als Balken angezeigt werden.** Balken gibt es nur für Werte mit einem sinnvollen Bereich von 0 bis 100 Prozent oder einem geeigneten Temperaturbereich. Bei ungeeigneten Sensoren informiert dich die Anwendung und zeigt den Wert stattdessen als Zahl an.
+- **Senkrechte Balken** eignen sich für kompakte Anzeigen mehrerer CPU-Kerne oder der GPU. Bewege den Mauszeiger nahe an das untere Ende und ziehe den Griff nach oben oder unten, um die Höhe anzupassen.
+- **Der blaue Ziehpunkt erscheint nur bei Bedarf.** Er wird nur sichtbar, wenn sich der Mauszeiger nahe an einem Balken oder an einem skalierbaren Bild befindet. Früher waren alle Ziehpunkte gleichzeitig sichtbar, was unübersichtlich war.
+- **Die Sensorauswahl erklärt die Werte.** Die Beschreibung unter dem Auswahlfeld wird beim Wechsel der Auswahl aktualisiert. So musst du nicht raten, was zum Beispiel „GPU Hotspot Temp“ oder „Max Temp Seen“ bedeutet.
 
-- **The screen is tiny** — 160×43 pixels, same as the real LCD. If you
-  cram too much in, rows will overlap or run off the bottom. The
-  preview shows you exactly what the real keyboard will show, so if it
-  looks wrong in the app, it'll look wrong on the keyboard too — space
-  things out.
-- **Each kind of element has its own cap per screen**: 16 sensors, 2
-  images, 4 text fields — not one shared total, so e.g. a screen can
-  have 16 sensors AND 2 images AND 4 text fields at once. The app will
-  tell you if you hit any of these limits.
-- **"Bar" isn't available for every sensor** — only ones with an
-  honest 0-100% or a sensible temperature range (the app will tell you
-  if you pick one that can't; it just shows as a number instead).
-- **Vertical bars** are useful for compact multi-core or GPU meters.
-  Hover near the lower end of a vertical bar and drag its handle up or
-  down to resize it.
-- **The blue resize handle only shows up when you're near a bar or a
-  resizable image.** It used to always show on every bar at once,
-  which looked cluttered and confusing — now it only appears when
-  you're actually about to use it.
-- **Sensor picker shows what each one means** — the description under
-  the dropdown updates as you change the selection, so you don't have
-  to guess what "GPU Hotspot Temp" or "Max Temp Seen" actually is.
+## Auf der echten Tastatur anzeigen
 
-## Bringing it to the real keyboard
+Wenn deine eigene Anzeige in der Anwendung passt, drücke die zugehörige L-Taste an der Tastatur (L2, L3, L4 oder L5). Falls die Tastatur eine Änderung nicht sofort anzeigt, muss möglicherweise der LCD-Dienst neu gestartet werden. Wenn du nicht weißt, wie das geht, frage nach.
 
-Once your custom screen looks right in the app, press the matching
-physical L-button on the keyboard (L2, L3, L4, or L5) to see it live.
-If the keyboard doesn't seem to reflect your latest changes, it might
-need the LCD service restarted — ask for that if you're not sure how.
+## Dashboard-Vorlagen
 
-## Dashboard presets
+Wähle eine Vorlage und klicke auf **Apply layout preset...**, um den ausgewählten Bildschirm L2–L5 zu ersetzen. Vorher fragt die Anwendung nach einer Bestätigung.
 
-Choose a preset and click **Apply layout preset...** to replace the
-selected L2-L5 screen. The app asks before replacing it. Available
-layouts are:
+- **CPU / GPU performance** – acht Balken für einzelne logische CPU-Kerne, GPU-Temperatur und -Auslastung, RAM und Netzwerk-Up-/Downloadraten.
+- **Temperature overview** – CPU-Temperatur, GPU-Edge-/Hotspot-/VRAM-Temperatur und die maximale CPU-Temperatur seit Dienststart.
+- **System overview** – CPU-, RAM- und GPU-Balken mit aktueller Uhrzeit und Datum.
 
-- **CPU / GPU performance** — eight per-logical-core utilization bars,
-  GPU temperature/load, RAM usage, and network upload/download rates.
-- **Temperature overview** — CPU temperature, GPU edge/hotspot/VRAM
-  temperatures, and the CPU's maximum temperature since the service
-  started.
-- **System overview** — CPU, RAM, and GPU utilization bars alongside
-  the current time and date.
-
-CPU core bar heights show utilization (not temperature); Linux does not
-expose per-core CPU temperatures on all hardware. You can move, rename,
-resize, or remove the generated elements like any other custom screen.
+Die Höhe der CPU-Balken zeigt die **Auslastung**, nicht die Temperatur. Linux stellt die Temperatur einzelner CPU-Kerne nicht auf jeder Hardware bereit.
