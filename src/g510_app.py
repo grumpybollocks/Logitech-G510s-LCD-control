@@ -26,8 +26,16 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QRect, QPoint
 from PyQt5.QtGui import QImage, QPixmap, QColor, QPainter, QPen, QFontMetrics
-import evdev
-from evdev import ecodes
+# evdev is deliberately NOT imported at module level -- direct request:
+# "make the app lighter, as much as possible". Confirmed via grep that
+# its only real use anywhere in this file is inside RecorderThread.run()
+# (recording a G-key macro, a rare on-demand action, not something
+# every session needs), and confirmed its module import alone costs
+# real, measurable memory (~4MB) and ~100ms, for every single launch of
+# this app regardless of whether macro recording is ever used. Imported
+# locally inside RecorderThread.run() instead, right next to the
+# existing local `import select` there -- same established pattern,
+# not a new one.
 
 import g510_canvas
 
@@ -400,6 +408,8 @@ class RecorderThread(QThread):
 
     def run(self):
         import select
+        import evdev
+        from evdev import ecodes
         try:
             dev = evdev.InputDevice(MAIN_KEYBOARD_DEVICE)
             dev.grab()
@@ -497,8 +507,19 @@ class MacroRecordDialog(QDialog):
 
     def reject(self):
         if self.recorder is not None:
+            # Real bug found via self-audit: a BOUNDED wait(2000) here
+            # reopens the exact crash on_recorded() below already
+            # documents and fixes with an unbounded wait() -- if
+            # ungrab/close somehow took longer than 2s, super().reject()
+            # would proceed to tear down this dialog (and its recorder
+            # attribute) while the QThread could still genuinely be
+            # alive, which is what caused "QThread: Destroyed while
+            # thread is still running" there. The thread's own loop
+            # checks _stop every ~100ms, so an unbounded wait here
+            # doesn't meaningfully hang Cancel -- it's just no longer
+            # racing against a clock that doesn't match that reality.
             self.recorder.stop()
-            self.recorder.wait(2000)  # let it clean up (ungrab) before the dialog closes
+            self.recorder.wait()
         super().reject()
 
     def on_recorded(self, sequence, ok):
@@ -2177,6 +2198,17 @@ class CustomScreensTab(QWidget):
     def _on_image_resize_finished(self, index, w, h, ok):
         started_on = self._image_resize_screen
         el_token = self._image_resize_el
+        # Same reasoning as RecorderThread's reject()/on_recorded() above
+        # (see their comments) -- this signal fires as the last thing
+        # run() does before returning, but that's not a hard guarantee
+        # the underlying OS thread has fully wound down by the time this
+        # slot runs. RecorderThread hit this as a reproduced crash;
+        # worker.start() here is short-lived (a single subprocess.run()
+        # call, no extra teardown work after it returns) so the race
+        # window is narrower, but it's the exact same QThread lifecycle
+        # mechanics -- wait() here is effectively instant in practice,
+        # the same low-cost trade already made for RecorderThread.
+        self._image_resize_worker.wait()
         self._image_resize_worker = None
         self._image_resize_el = None
         if ok and started_on == self.current_screen:
