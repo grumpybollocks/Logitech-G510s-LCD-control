@@ -10,6 +10,24 @@ set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
 
+INSTALL_USER="${SUDO_USER:-$(id -un)}"
+echo "=== G510-Gerätegruppe ==="
+if [ "$INSTALL_USER" != "$(id -un)" ]; then
+    echo "Bitte install.sh ohne sudo starten; das Skript fordert sudo nur für Systemänderungen an."
+    exit 1
+fi
+if ! getent group g510 >/dev/null; then
+    sudo groupadd --system g510
+fi
+if ! id -nG | tr ' ' '\n' | grep -Fxq g510; then
+    sudo usermod -aG g510 "$INSTALL_USER"
+    echo "  $INSTALL_USER wurde der Gruppe g510 hinzugefügt."
+    echo "  Bitte ab- und wieder anmelden und install.sh anschließend erneut starten,"
+    echo "  damit die Benutzer-Dienste die neuen Geräteberechtigungen erhalten."
+    exit 0
+fi
+echo "  $INSTALL_USER ist Mitglied der Gruppe g510."
+
 echo "=== 1/7: Official repo packages ==="
 # Real per-package [ok]/[missing] reporting -- never a silent pacman
 # black box. Only actually-missing packages get installed.
@@ -135,7 +153,7 @@ for svc in g510-lcd-stats g510-lcd-buttons g510-macro-daemon; do
     sed "s|__PROJECT_DIR__|$DIR|g" "services/$svc.service" > ~/.config/systemd/user/"$svc.service"
 done
 systemctl --user daemon-reload
-systemctl --user enable --now ydotool.service
+sudo systemctl enable --now ydotool.service
 systemctl --user enable --now g510-lcd-stats.service g510-lcd-buttons.service g510-macro-daemon.service
 
 echo "=== 7/7: Desktop shortcuts ==="
