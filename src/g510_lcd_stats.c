@@ -401,8 +401,34 @@ static void update_media_info(void) {
     if (have_time && pos_us >= 0 && len_us >= 0) {
         int pos_s = (int)(pos_us / 1000000);
         int len_s = (int)(len_us / 1000000);
-        snprintf(g_media_elapsed, sizeof(g_media_elapsed), "%d:%02d/%d:%02d",
-                 pos_s / 60, pos_s % 60, len_s / 60, len_s % 60);
+        /* Real bug, direct report: on a YouTube "premiere" (a live
+           broadcast, not a normal VOD), the elapsed display showed
+           "0:15/34630872:22" (a nonsense ~65-YEAR total) then reset
+           back to "0:15" and repeated -- a live stream has no real
+           fixed duration, so whatever JS Infinity/NaN the page's
+           <video>.duration reports for it is getting serialized into
+           mpris:length as huge garbage, not a real length in seconds.
+           The position reset is a second, separate symptom of the
+           same root cause: a live stream's reported position is
+           relative to an ever-shifting live buffer window, not a
+           fixed-duration timeline, so "where it left off" genuinely
+           isn't a stable concept the way it is for a normal track --
+           not something fixable by smoothing on this end, since the
+           browser itself doesn't track it that way.
+           MEDIA_MAX_REASONABLE_LEN_S (24h) is a generous real upper
+           bound for any genuine track/video length -- past that, the
+           value is garbage, not just "a long podcast". Shown as just
+           elapsed + "LIVE" instead of a fake "/huge-number" total,
+           which is also the honest answer: there IS no fixed total
+           to show. */
+        #define MEDIA_MAX_REASONABLE_LEN_S (24 * 3600)
+        if (len_s <= 0 || len_s > MEDIA_MAX_REASONABLE_LEN_S) {
+            snprintf(g_media_elapsed, sizeof(g_media_elapsed), "%d:%02d LIVE",
+                     pos_s / 60, pos_s % 60);
+        } else {
+            snprintf(g_media_elapsed, sizeof(g_media_elapsed), "%d:%02d/%d:%02d",
+                     pos_s / 60, pos_s % 60, len_s / 60, len_s % 60);
+        }
     }
 }
 
