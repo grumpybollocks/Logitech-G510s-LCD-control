@@ -18,6 +18,7 @@
 #include <math.h>
 #include <unistd.h>
 #include <time.h>
+#include <ctype.h>
 #include <sys/statvfs.h>
 #include <sys/stat.h>
 #include <dirent.h>
@@ -313,6 +314,41 @@ static char g_media_title[64] = "";
 static char g_media_artist[48] = "";
 static char g_media_elapsed[32] = ""; /* wide enough for even an absurdly long podcast (e.g. 9999:59/9999:59) -- -Wformat-truncation caught the original 16-byte buffer as theoretically too small, real warning, not ignored */
 
+/* Real bug, direct report: "its also picking up a (56) which is just
+   a bunch of notifications, needs to be ignored. it used to look nice
+   before." Confirmed directly: for a YouTube live premiere,
+   plasma-browser-integration's own richer title/artist extraction
+   degrades to just the raw BROWSER TAB title ("(56) Real Title -
+   YouTube") instead of the clean video title it normally extracts for
+   regular VOD content -- "(56)" is Brave's own unread-notification-
+   count badge prepended to the tab title, not anything about the
+   video itself. Strips that leading "(<digits>) " badge and the
+   trailing " - YouTube" tab-title suffix regardless of which player
+   line it came from, so a degraded title still displays cleanly.
+   (The missing artist/channel name for this specific content is a
+   separate, real limitation -- confirmed via the full MPRIS metadata
+   dump that NEITHER player source has a channel name available for
+   this particular live stream, not something this function can
+   invent from data that isn't there.) */
+static void strip_browser_tab_noise(char *title) {
+    if (title[0] == '(') {
+        char *close = strchr(title, ')');
+        if (close && close > title + 1 && close[1] == ' ') {
+            int all_digits = 1;
+            for (char *p = title + 1; p < close; p++) {
+                if (!isdigit((unsigned char)*p)) { all_digits = 0; break; }
+            }
+            if (all_digits) memmove(title, close + 2, strlen(close + 2) + 1);
+        }
+    }
+    size_t len = strlen(title);
+    const char *suffix = " - YouTube";
+    size_t suflen = strlen(suffix);
+    if (len > suflen && strcmp(title + len - suflen, suffix) == 0) {
+        title[len - suflen] = 0;
+    }
+}
+
 static void update_media_info(void) {
     g_media_title[0] = 0;
     g_media_artist[0] = 0;
@@ -383,6 +419,7 @@ static void update_media_info(void) {
         if (!have_title || is_plasma) {
             strncpy(title_buf, title, sizeof(title_buf) - 1);
             title_buf[sizeof(title_buf) - 1] = 0;
+            strip_browser_tab_noise(title_buf);
             strncpy(artist_buf, artist, sizeof(artist_buf) - 1);
             artist_buf[sizeof(artist_buf) - 1] = 0;
             have_title = 1;
