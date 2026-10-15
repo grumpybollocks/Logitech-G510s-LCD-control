@@ -261,6 +261,89 @@ COLOR_RGB = {
     "White": (255, 255, 255),
 }
 
+# Standardbelegung der Tasten L2-L5 (Vorlage pro Taste)
+DEFAULT_SCREEN_PRESETS = {
+    "L2": "performance",
+    "L3": "temperatures",
+    "L4": "network",
+    "L5": "media",
+}
+
+# Profile: LED-Farbe + anzuzeigender LCD-Bildschirm (0 = Statistik, 2-5 = L2-L5)
+PROFILES = {
+    "Spiel": {"rgb": (255, 0, 0), "screen": 2},
+    "Arbeit": {"rgb": (0, 120, 255), "screen": 4},
+    "Nacht": {"rgb": (60, 0, 0), "screen": 1},
+}
+
+PRESET_NAMES = {
+    "performance": "CPU / GPU performance",
+    "temperatures": "Temperature overview",
+    "system": "System overview",
+    "network": "Network, disks & clock",
+    "media": "Media player",
+}
+
+
+def build_layout_preset(preset):
+    """Liefert die Elementliste einer Dashboard-Vorlage."""
+    def sensor(key, x, y, style="number", width=40, orientation="horizontal", height=28):
+        element = {
+            "kind": "sensor", "sensor": key, "style": style,
+            "orientation": orientation, "x": x, "y": y,
+            "width": width, "height": height, "font_size": 0,
+        }
+        if key in DATETIME_FORMAT_DEFAULTS:
+            element["format"] = DATETIME_FORMAT_DEFAULTS[key]
+        return element
+
+    if preset == "performance":
+        elements = [
+            sensor(f"CPU_CORE_{core}", core * 10, 11, "bar", 8, "vertical", 29)
+            for core in range(8)
+        ]
+        elements.extend([
+            sensor("GPU_EDGE_TEMP", 80, 8),
+            sensor("GPU_PCT", 104, 17, "bar", 10, "vertical", 24),
+            sensor("RAM_PCT", 117, 1, "bar", 6),
+            sensor("NET_UP", 117, 20),
+            sensor("NET_DOWN", 117, 31),
+            {"kind": "text", "content": "CPU", "x": 0, "y": 1, "font_size": 0},
+            {"kind": "text", "content": "GPU", "x": 80, "y": 1, "font_size": 0},
+        ])
+    elif preset == "temperatures":
+        elements = [
+            sensor("CPU_TEMP", 2, 2),
+            sensor("GPU_EDGE_TEMP", 82, 2),
+            sensor("MAXTEMP", 2, 23),
+            sensor("GPU_HOTSPOT_TEMP", 82, 23),
+            sensor("GPU_VRAM_TEMP", 2, 32),
+        ]
+    elif preset == "network":
+        elements = [
+            sensor("NET_DOWN", 2, 2),
+            sensor("NET_UP", 2, 12),
+            sensor("DISK_ROOT_PCT", 2, 24, "bar", 50),
+            sensor("TIME", 100, 2),
+            sensor("DATE", 92, 14),
+        ]
+    elif preset == "media":
+        elements = [
+            sensor("MEDIA_TITLE", 2, 2),
+            sensor("MEDIA_ARTIST", 2, 12),
+            {"kind": "visualizer", "x": 2, "y": 24,
+             "width": DEFAULT_VISUALIZER_WIDTH, "height": DEFAULT_VISUALIZER_HEIGHT},
+        ]
+    else:
+        elements = [
+            sensor("CPU_PCT", 2, 1, "bar", 34),
+            sensor("RAM_PCT", 2, 14, "bar", 34),
+            sensor("GPU_PCT", 2, 27, "bar", 34),
+            {**sensor("TIME", 100, 2), "label": "TIME"},
+            {**sensor("DATE", 100, 18), "label": "DATE"},
+        ]
+    return elements
+
 
 def read_current_rgb():
     try:
@@ -1793,6 +1876,8 @@ class CustomScreensTab(QWidget):
         self.layout_preset_combo.addItem("CPU / GPU performance", "performance")
         self.layout_preset_combo.addItem("Temperature overview", "temperatures")
         self.layout_preset_combo.addItem("System overview", "system")
+        self.layout_preset_combo.addItem("Network, disks & clock", "network")
+        self.layout_preset_combo.addItem("Media player", "media")
         self.layout_preset_combo.setToolTip("Select a ready-made layout for the selected LCD screen.")
         panel_layout.addWidget(self.layout_preset_combo)
         self.apply_layout_btn = QPushButton("Apply layout preset...")
@@ -1803,6 +1888,26 @@ class CustomScreensTab(QWidget):
         )
         self.apply_layout_btn.clicked.connect(self.on_apply_layout_preset)
         panel_layout.addWidget(self.apply_layout_btn)
+
+        self.apply_default_btn = QPushButton("Standardbelegung L2–L5")
+        self.apply_default_btn.setObjectName("PanelButton")
+        self.apply_default_btn.setToolTip(
+            "L2 Performance, L3 Temperaturen, L4 Netzwerk/Uhr, L5 Medien.")
+        self.apply_default_btn.clicked.connect(self.on_apply_default_layout)
+        panel_layout.addWidget(self.apply_default_btn)
+
+        profile_row = QHBoxLayout()
+        self.profile_combo = QComboBox()
+        for pname in PROFILES:
+            self.profile_combo.addItem(pname)
+        self.profile_combo.setToolTip(
+            "Profil: setzt LED-Farbe (dauerhaft) und wechselt den LCD-Bildschirm.")
+        profile_row.addWidget(self.profile_combo, 1)
+        self.apply_profile_btn = QPushButton("Profil anwenden")
+        self.apply_profile_btn.setObjectName("PanelButton")
+        self.apply_profile_btn.clicked.connect(self.on_apply_profile)
+        profile_row.addWidget(self.apply_profile_btn)
+        panel_layout.addLayout(profile_row)
 
         # Direct report: "gui buttons are ambigious and not that well
         # placed" -- Import Image/Add Text/Add Visualizer were stacked
@@ -2019,66 +2124,59 @@ class CustomScreensTab(QWidget):
         if self.current_screen == "L1":
             return
         preset = self.layout_preset_combo.currentData()
-        preset_names = {
-            "performance": "CPU / GPU performance",
-            "temperatures": "Temperature overview",
-            "system": "System overview",
-        }
         answer = QMessageBox.question(
             self,
             "Apply dashboard preset",
             f"Replace all elements on {self.current_screen} with the "
-            f"{preset_names[preset]} layout?",
+            f"{PRESET_NAMES[preset]} layout?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
             return
-
-        def sensor(key, x, y, style="number", width=40, orientation="horizontal", height=28):
-            element = {
-                "kind": "sensor", "sensor": key, "style": style,
-                "orientation": orientation, "x": x, "y": y,
-                "width": width, "height": height, "font_size": 0,
-            }
-            if key in DATETIME_FORMAT_DEFAULTS:
-                element["format"] = DATETIME_FORMAT_DEFAULTS[key]
-            return element
-
-        if preset == "performance":
-            elements = [
-                sensor(f"CPU_CORE_{core}", core * 10, 11, "bar", 8, "vertical", 29)
-                for core in range(8)
-            ]
-            elements.extend([
-                sensor("GPU_EDGE_TEMP", 80, 8),
-                sensor("GPU_PCT", 104, 17, "bar", 10, "vertical", 24),
-                sensor("RAM_PCT", 117, 1, "bar", 6),
-                sensor("NET_UP", 117, 20),
-                sensor("NET_DOWN", 117, 31),
-                {"kind": "text", "content": "CPU", "x": 0, "y": 1, "font_size": 0},
-                {"kind": "text", "content": "GPU", "x": 80, "y": 1, "font_size": 0},
-            ])
-        elif preset == "temperatures":
-            elements = [
-                sensor("CPU_TEMP", 2, 2),
-                sensor("GPU_EDGE_TEMP", 82, 2),
-                sensor("MAXTEMP", 2, 23),
-                sensor("GPU_HOTSPOT_TEMP", 82, 23),
-                sensor("GPU_VRAM_TEMP", 2, 32),
-            ]
-        else:
-            elements = [
-                sensor("CPU_PCT", 2, 1, "bar", 34),
-                sensor("RAM_PCT", 2, 14, "bar", 34),
-                sensor("GPU_PCT", 2, 27, "bar", 34),
-                {**sensor("TIME", 100, 2), "label": "TIME"},
-                {**sensor("DATE", 100, 18), "label": "DATE"},
-            ]
-        self.config[self.current_screen] = elements
+        self.config[self.current_screen] = build_layout_preset(preset)
         save_custom_screens(self.config)
         self.refresh_elements_list()
         self.refresh_preview()
+
+    def on_apply_default_layout(self):
+        answer = QMessageBox.question(
+            self,
+            "Standardbelegung L2-L5",
+            "Alle Elemente auf L2 bis L5 durch die Standardbelegung ersetzen?\n\n"
+            + "\n".join(f"{k}: {PRESET_NAMES[v]}" for k, v in DEFAULT_SCREEN_PRESETS.items())
+            + "\n\nDie bisherigen Bildschirme werden vorher als Sicherung "
+              "(custom_screens.txt.vor-standardbelegung) abgelegt.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        try:
+            if CUSTOM_SCREENS_FILE.exists():
+                shutil.copy2(CUSTOM_SCREENS_FILE,
+                             CUSTOM_SCREENS_FILE.with_name(CUSTOM_SCREENS_FILE.name + ".vor-standardbelegung"))
+        except OSError:
+            pass
+        for key, preset in DEFAULT_SCREEN_PRESETS.items():
+            self.config[key] = build_layout_preset(preset)
+        save_custom_screens(self.config)
+        self.refresh_elements_list()
+        self.refresh_preview()
+
+    def on_apply_profile(self):
+        name = self.profile_combo.currentText()
+        profile = PROFILES[name]
+        ok, err = apply_backlight(profile["rgb"])
+        if not ok:
+            QMessageBox.warning(self, "Profil", err)
+            return
+        import os
+        runtime = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
+        try:
+            Path(runtime, "g510lcd_screen").write_text(str(profile["screen"]))
+        except OSError:
+            pass
 
     def on_import_image(self):
         if self.current_screen == "L1":

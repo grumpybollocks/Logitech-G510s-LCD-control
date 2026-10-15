@@ -48,6 +48,13 @@ Wähle eine Vorlage und klicke auf **Apply layout preset...**, um den ausgewähl
 
 - **CPU / GPU performance** – acht Balken für einzelne logische CPU-Kerne, GPU-Temperatur und -Auslastung, RAM und Netzwerk-Up-/Downloadraten.
 - **Temperature overview** – CPU-Temperatur, GPU-Edge-/Hotspot-/VRAM-Temperatur und die maximale CPU-Temperatur seit Dienststart.
+- **Network, disks & clock** – Down-/Upload, Festplattenbelegung als Balken, Uhrzeit und Datum.
+- **Media player** – Titel, Interpret und Audio-Visualizer.
 - **System overview** – CPU-, RAM- und GPU-Balken mit aktueller Uhrzeit und Datum.
 
 Die Höhe der CPU-Balken zeigt die **Auslastung**, nicht die Temperatur. Linux stellt die Temperatur einzelner CPU-Kerne nicht auf jeder Hardware bereit.
+
+## Standardbelegung und Profile
+
+- **Standardbelegung L2–L5:** Ein Klick belegt L2 mit Performance, L3 mit Temperaturen, L4 mit Netzwerk/Festplatte/Uhr und L5 mit Medien. Vorher fragt die Anwendung nach und legt eine Sicherung `custom_screens.txt.vor-standardbelegung` an.
+- **Profile (Spiel, Arbeit, Nacht):** Wähle ein Profil und klicke auf **Profil anwenden**. Die LED-Farbe wird gesetzt (und bleibt auch nach dem Neustart) und der LCD-Bildschirm wechselt: Spiel → L2 (rot), Arbeit → L4 (blau), Nacht → Uhr (dunkelrot).
