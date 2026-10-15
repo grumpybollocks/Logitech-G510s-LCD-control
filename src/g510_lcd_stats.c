@@ -1867,10 +1867,8 @@ static void draw_element(g15canvas *c, element_t *el) {
         label_w = measure_builtin_label_width(sized_label, el->font_size);
         if (!def->auto_center) draw_builtin_label(c, sized_label, el->x, el->y, el->font_size);
     }
-    /* Abstand zwischen Label und Wert: zwei Leerzeichen der gewaehlten Schrift */
-    int gap = 2 * (measure_builtin_text_width("I I", el->font_size) -
-                   measure_builtin_text_width("II", el->font_size));
-    if (gap < 4) gap = 4;
+    /* Abstand zwischen Label und Wert in Pixeln */
+    const int gap = 2;
     int value_x = el->x + label_w + (label_w ? gap : 4);
 
     element_bounds_t *b = (g_element_bounds_count < MAX_ELEMENTS)
