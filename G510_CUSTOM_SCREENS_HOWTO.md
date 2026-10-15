@@ -1,6 +1,6 @@
 # Eigene Bildschirme – Kurzanleitung
 
-Im Tab **Custom Screens** kannst du eigene Übersichten für die Tasten L2–L5 erstellen. Hier findest du die wichtigsten Schritte.
+Im Tab **LCD Screens** kannst du eigene Übersichten für die Tasten L2–L5 erstellen. Hier findest du die wichtigsten Schritte.
 
 ## Grundlagen
 
@@ -8,7 +8,7 @@ Im Tab **Custom Screens** kannst du eigene Übersichten für die Tasten L2–L5 
    - **L1 ist eine Vorschau und nicht bearbeitbar.** Dort wird die eingebaute Uhr angezeigt. Mit der physischen L1-Taste an der Tastatur wechselst du wie gewohnt zwischen Uhr und CPU-/RAM-/VRAM-/Temperaturanzeige. Der Tab zeigt jeweils den aktuellen Inhalt, damit du nicht zur Tastatur greifen musst. Hinzufügen und Importieren sind hier deaktiviert; der Mauszeiger erklärt per Tooltip den Grund.
    - **L2–L5 kannst du frei gestalten.** Ein leerer Bildschirm bleibt einfach leer – du musst vorher nichts löschen.
 
-2. **Sensor hinzufügen** – Wähle im ersten Auswahlfeld einen Sensor (zum Beispiel CPU-Auslastung, RAM oder GPU-Temperatur). Wähle **Number** für eine reine Zahlenanzeige oder **Bar** für einen Balken mit Zahlenwert. Für Balken kannst du außerdem eine waagerechte oder senkrechte Ausrichtung einstellen. Klicke anschließend auf **Add**. Senkrechte Balken zeigen nur den Balken; für eine Überschrift kannst du ein eigenes Textelement daneben platzieren.
+2. **Sensor hinzufügen** – Wähle im ersten Auswahlfeld einen Sensor (zum Beispiel CPU-Auslastung, RAM oder GPU-Temperatur). Wähle **Number** für eine reine Zahlenanzeige oder **Bar** für einen Balken mit Zahlenwert. Für Balken kannst du außerdem eine waagerechte oder senkrechte Ausrichtung einstellen. Klicke anschließend auf **Add**. Senkrechte Balken zeigen ein kurzes Label über dem Balken; die CPU-Kerne verwenden standardmäßig kompakte Labels wie C1 bis C8.
 
 3. **Text hinzufügen** – Klicke auf **Add Text...**, gib den gewünschten festen Text ein (zum Beispiel eine Beschriftung oder einen Namen) und füge ihn wie jedes andere Element zur Vorschau hinzu. Pro Bildschirm sind bis zu vier Textfelder möglich.
 
@@ -18,9 +18,14 @@ Im Tab **Custom Screens** kannst du eigene Übersichten für die Tasten L2–L5 
 
 6. **Balken oder Bild skalieren** – Bewege den Mauszeiger nahe an das rechte Ende eines Balkens oder an die rechte untere Ecke eines Bildes. Ein kleines blaues Quadrat erscheint. Ziehe es, um die Größe anzupassen.
 
-7. **Zahlen oder Text skalieren** – Diese Elemente bestehen aus Text; die kleinen eingebauten Display-Schriften lassen sich nicht stufenlos vergrößern. Deshalb gibt es dafür keinen Ziehpunkt. Wähle vor dem Hinzufügen im Auswahlfeld **Text Size** eine Größe (Small/Medium/Large/Huge). Bei bereits vorhandenen Elementen kannst du über die Schaltfläche neben dem jeweiligen Eintrag rechts durch die Größen wechseln.
+7. **Zahlen oder Text skalieren** – Diese Elemente bestehen aus Text; die kleinen eingebauten Display-Schriften lassen sich nicht stufenlos vergrößern. Deshalb gibt es dafür keinen Ziehpunkt. Wähle vor dem Hinzufügen im Auswahlfeld **Text Size** eine Größe (Small/Medium/Large/Huge). Bei bereits vorhandenen Elementen kannst du über die Schaltfläche neben dem jeweiligen Eintrag rechts durch die Größen wechseln. Sensor-Labels und ihre Werte verwenden dieselbe Größe.
 
 8. **Element entfernen** – Klicke rechts in der Liste neben dem Element auf **✕**.
+9. **Anzeigenamen ändern** – Bearbeite in **Elements on this screen** das Textfeld neben einem Sensor- oder Textelement und drücke Enter. Der Name wird mit dem Bildschirm gespeichert und erscheint in der Vorschau und auf der Tastatur. Temperatursensoren haben kompakte Standardnamen wie **CPU** und **GPU** (z. B. `CPU 32°C`, `GPU 45°C`); sie lassen sich einzeln ändern.
+
+10. **Datums- und Zeitformat wählen** – Bei **Date** und **Time** wählst du das Format über die kompakte Auswahl in der Zeile. Sie ersetzt das Label-Feld, da Datum und Uhrzeit ohne Label angezeigt werden. Es werden nur unterstützte Formate angeboten; die Wahl wird pro Bildschirm gespeichert und die Vorschau aktualisiert sich sofort.
+
+11. **Mit einer Dashboard-Vorlage starten** – Wähle **CPU / GPU performance**, **Temperature overview** oder **System overview** und klicke auf **Apply layout preset...**. Der gewählte Bildschirm L2–L5 wird nach Bestätigung ersetzt; die erzeugten Elemente kannst du danach wie gewohnt verschieben, umbenennen oder entfernen.
 
 Das war's. Eine **Speichern**-Schaltfläche gibt es nicht: Jede Änderung (Verschieben, Skalieren, Hinzufügen oder Entfernen) wird sofort gespeichert.
 
@@ -37,8 +42,12 @@ Das war's. Eine **Speichern**-Schaltfläche gibt es nicht: Jede Änderung (Versc
 
 Wenn deine eigene Anzeige in der Anwendung passt, drücke die zugehörige L-Taste an der Tastatur (L2, L3, L4 oder L5). Falls die Tastatur eine Änderung nicht sofort anzeigt, muss möglicherweise der LCD-Dienst neu gestartet werden. Wenn du nicht weißt, wie das geht, frage nach.
 
-## Übersicht im C2DtoG15-Stil
+## Dashboard-Vorlagen
 
-Klicke auf **Apply C2DtoG15 layout**, um den ausgewählten Bildschirm L2–L5 durch eine kompakte Übersicht zu ersetzen. Sie enthält acht Balken für die Auslastung einzelner logischer CPU-Kerne, die GPU-Temperatur am Rand, GPU-Auslastung, RAM-Auslastung sowie aktuelle Netzwerk-Up- und Downloadraten. Vor dem Ersetzen fragt die Anwendung nach einer Bestätigung. Anschließend kannst du die erzeugten Elemente wie gewohnt verschieben, skalieren und Sensoren hinzufügen oder entfernen.
+Wähle eine Vorlage und klicke auf **Apply layout preset...**, um den ausgewählten Bildschirm L2–L5 zu ersetzen. Vorher fragt die Anwendung nach einer Bestätigung.
+
+- **CPU / GPU performance** – acht Balken für einzelne logische CPU-Kerne, GPU-Temperatur und -Auslastung, RAM und Netzwerk-Up-/Downloadraten.
+- **Temperature overview** – CPU-Temperatur, GPU-Edge-/Hotspot-/VRAM-Temperatur und die maximale CPU-Temperatur seit Dienststart.
+- **System overview** – CPU-, RAM- und GPU-Balken mit aktueller Uhrzeit und Datum.
 
 Die Höhe der CPU-Balken zeigt die **Auslastung**, nicht die Temperatur. Linux stellt die Temperatur einzelner CPU-Kerne nicht auf jeder Hardware bereit.

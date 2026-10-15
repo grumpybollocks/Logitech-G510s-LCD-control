@@ -148,6 +148,7 @@ QPushButton#PanelPrimary {
     font-weight: 600;
     font-size: 11px;
     padding: 4px 8px;
+    min-height: 28px;
 }
 QPushButton#PanelPrimary:hover {
     background-color: #4a7cd4;
@@ -157,11 +158,17 @@ QPushButton#PanelButton {
     font-size: 11px;
     padding: 4px 8px;
     text-align: center;
+    min-height: 28px;
 }
 QLabel#Title {
     font-size: 15px;
     font-weight: 600;
     padding: 4px 2px 10px 2px;
+}
+QLabel#PanelSection {
+    color: #c9c9d0;
+    font-weight: 600;
+    padding-top: 4px;
 }
 QWidget#Panel {
     background-color: #1c1c20;
@@ -197,6 +204,11 @@ QLineEdit {
     border: 1px solid #34343a;
     border-radius: 4px;
     padding: 5px;
+    min-height: 24px;
+}
+QComboBox {
+    min-height: 28px;
+    padding: 3px 8px;
 }
 """
 
@@ -777,6 +789,7 @@ class KeyboardTab(QWidget):
 # schema needed for something this small).
 SENSOR_CHOICES = [
     ("CPU_PCT", "CPU %"),
+    *[(f"CPU_CORE_{i}", f"CPU Core {i + 1} %") for i in range(8)],
     ("CPU_GHZ", "CPU GHz"),
     ("CPU_TEMP", "CPU Temp"),
     ("RAM_PCT", "RAM %"),
@@ -807,6 +820,47 @@ SENSOR_CHOICES = [
     ("MB_TEMP6", "Motherboard Temp 6 (unlabeled)"),
 ]
 SENSOR_LABELS = dict(SENSOR_CHOICES)
+DEFAULT_SENSOR_DISPLAY_LABELS = {
+    "CPU_PCT": "CPU",
+    **{f"CPU_CORE_{i}": f"C{i + 1}" for i in range(8)},
+    "CPU_GHZ": "GHZ",
+    "CPU_TEMP": "CPU",
+    "RAM_PCT": "RAM",
+    "RAM_AMOUNT": "AMT",
+    "VRAM_PCT": "VRAM",
+    "VRAM_AMOUNT": "AMT",
+    "MAXTEMP": "MAXT",
+    "GPU_PCT": "GPU",
+    "GPU_EDGE_TEMP": "GPU",
+    "GPU_HOTSPOT_TEMP": "HOT",
+    "GPU_VRAM_TEMP": "VMEM",
+    "SWAP_PCT": "SWAP",
+    "DISK_ROOT_PCT": "DISK",
+    "DISK_SECONDARY_PCT": "DSK2",
+    "UPTIME": "UPTM",
+    "NET_DOWN": "DN",
+    "NET_UP": "UP",
+    "TIME": "",
+    "DATE": "",
+    "MEDIA_TITLE": "",
+    "MEDIA_ARTIST": "",
+    "MEDIA_ELAPSED": "",
+    **{f"MB_TEMP{i}": f"MB{i}" for i in range(1, 7)},
+}
+DATETIME_FORMAT_CHOICES = {
+    "TIME": [
+        ("hms", "24-hour HH:MM:SS"),
+        ("hm", "24-hour HH:MM"),
+        ("ampm", "12-hour HH:MM AM/PM"),
+    ],
+    "DATE": [
+        ("short", "DD Mon"),
+        ("eu", "DD.MM.YYYY"),
+        ("eu_short", "DD.MM."),
+        ("iso", "YYYY-MM-DD"),
+    ],
+}
+DATETIME_FORMAT_DEFAULTS = {"TIME": "hms", "DATE": "short"}
 
 # Direct feedback: "the functions are weird, i dont know from that
 # list what is what and exactly what they do." Plain-language
@@ -818,6 +872,7 @@ SENSOR_LABELS = dict(SENSOR_CHOICES)
 # two distinct, real AMD GPU sensors, not a duplicate/typo.
 SENSOR_DESCRIPTIONS = {
     "CPU_PCT": "Overall CPU load, averaged across all cores.",
+    **{f"CPU_CORE_{i}": f"Utilization of logical CPU core {i + 1}." for i in range(8)},
     "CPU_GHZ": "Current CPU clock speed.",
     "CPU_TEMP": "CPU package temperature.",
     "RAM_PCT": "RAM used, as a percentage of total.",
@@ -854,7 +909,8 @@ SENSOR_DESCRIPTIONS = {
 # SENSORS[] table exactly. Anything else offered as "Bar" would need a
 # guessed scale, which we don't do.
 BAR_CAPABLE_SENSORS = {
-    "CPU_PCT", "CPU_TEMP", "RAM_PCT", "VRAM_PCT", "MAXTEMP",
+    "CPU_PCT", *{f"CPU_CORE_{i}" for i in range(8)},
+    "CPU_TEMP", "RAM_PCT", "VRAM_PCT", "MAXTEMP",
     "GPU_PCT", "GPU_EDGE_TEMP", "GPU_HOTSPOT_TEMP", "GPU_VRAM_TEMP",
     "SWAP_PCT", "DISK_ROOT_PCT", "DISK_SECONDARY_PCT",
     "MB_TEMP1", "MB_TEMP2", "MB_TEMP3", "MB_TEMP4", "MB_TEMP5", "MB_TEMP6",
@@ -883,7 +939,8 @@ SCREEN_PREVIEW_KEYS = ["L1"] + CUSTOM_SCREEN_KEYS
 MAX_IMAGES_PER_SCREEN = 2  # matches MAX_IMAGES in g510_lcd_stats.c
 MAX_TEXTS_PER_SCREEN = 4  # matches MAX_TEXTS in g510_lcd_stats.c
 MAX_VISUALIZERS_PER_SCREEN = 1  # matches MAX_VISUALIZERS in g510_lcd_stats.c -- only one persistent audio-capture stream exists process-wide, a second visualizer element would just duplicate the same bar data
-CUSTOM_SCREENS_PANEL_WIDTH = 230  # single source of truth -- also used to compute how much a row's label can show before it needs eliding, see refresh_elements_list()
+CUSTOM_SCREENS_PANEL_WIDTH = 290
+ELEMENT_ROW_FIELD_WIDTH = 126
 DEFAULT_VISUALIZER_WIDTH = 70
 DEFAULT_VISUALIZER_HEIGHT = 37
 TEXT_CHAR_PX = 6  # rough estimate for G15_TEXT_SMALL's per-character width -- no real font-metric access from Python for freeform text (same reason sensor elements originally needed the .meta sidecar), but text elements deliberately skip that mechanism (see on_add_text's docstring) so this stays an approximation, not pixel-perfect
@@ -925,12 +982,16 @@ def load_custom_screens():
             key = line.split(" ", 1)[1]
             current = key if key in config else None
         elif line.startswith("ELEMENT ") and current:
-            el = {"kind": "sensor", "sensor": "", "style": "number", "x": 0, "y": 0, "width": 40, "font_size": 0}
+            el = {
+                "kind": "sensor", "sensor": "", "style": "number",
+                "orientation": "horizontal", "x": 0, "y": 0,
+                "width": 40, "height": 28, "font_size": 0, "label": "", "format": "",
+            }
             for tok in line[len("ELEMENT "):].split():
                 if "=" not in tok:
                     continue
                 k, v = tok.split("=", 1)
-                if k in ("x", "y", "width"):
+                if k in ("x", "y", "width", "height"):
                     try:
                         el[k] = int(v)
                     except ValueError:
@@ -940,7 +1001,14 @@ def load_custom_screens():
                         el["font_size"] = int(v) if int(v) in (0, 1, 2, 3) else 0
                     except ValueError:
                         pass
-                elif k in ("sensor", "style"):
+                elif k in ("sensor", "style", "orientation"):
+                    el[k] = v
+                elif k == "label":
+                    el[k] = v.replace("_", " ")
+                elif k == "format" and v in {
+                    choice for choices in DATETIME_FORMAT_CHOICES.values()
+                    for choice, _ in choices
+                }:
                     el[k] = v
             if el["sensor"]:
                 el["sensor"] = LEGACY_SENSOR_ALIASES.get(el["sensor"], el["sensor"])
@@ -1031,10 +1099,19 @@ def save_custom_screens(config):
                 lines.append(f"VISUALIZER x={el['x']} y={el['y']} width={el['width']} height={el['height']}")
             else:
                 width = el.get("width", 40)
-                lines.append(
+                orientation = el.get("orientation", "horizontal")
+                line = (
                     f"ELEMENT sensor={el['sensor']} style={el['style']} "
                     f"x={el['x']} y={el['y']} width={width} font={el.get('font_size', 0)}"
                 )
+                if el.get("label"):
+                    line += f" label={el['label'].replace(' ', '_')}"
+                if el.get("sensor") in DATETIME_FORMAT_CHOICES:
+                    date_format = el.get("format") or DATETIME_FORMAT_DEFAULTS[el["sensor"]]
+                    line += f" format={date_format}"
+                if orientation == "vertical" and el.get("style") == "bar":
+                    line += f" orientation=vertical height={el.get('height', 28)}"
+                lines.append(line)
     CUSTOM_SCREENS_FILE.write_text("\n".join(lines) + "\n")
 
 
@@ -1135,8 +1212,7 @@ PREVIEW_SCALE = 4
 # Python (the C renderer computes real text width using font metrics
 # Python doesn't have access to), so this is a deliberately generous
 # fixed size rather than pixel-perfect. Good enough to click and drag
-# elements that are reasonably spaced, which is the normal case for an
-# 8-element-max, 160x43 screen.
+# elements that are reasonably spaced on a 160x43 screen.
 ELEMENT_HIT_W = 50
 ELEMENT_HIT_H = 10
 # Direct report: "the handle is always too small, or i cant find it"
@@ -1147,6 +1223,8 @@ ELEMENT_HIT_H = 10
 RESIZE_HANDLE_PX = 8   # half-size of the little resize square, in LCD px
 MIN_BAR_WIDTH = 10
 MAX_BAR_WIDTH = 140
+MIN_BAR_HEIGHT = 6
+MAX_BAR_HEIGHT = 40
 MIN_IMAGE_SIZE = 4     # smallest an image can be dragged down to, in LCD px
 
 
@@ -1157,8 +1235,9 @@ class ScreenPreviewCanvas(QWidget):
     go, same underlying --preview mechanism as before, just wired to
     mouse events instead of typed X/Y/width numbers."""
     element_moved = pyqtSignal(int, int, int)   # index, new_x, new_y (LCD-space)
-    element_resized = pyqtSignal(int, int)        # index, new_width (LCD-space) -- bars only
+    element_resized = pyqtSignal(int, int)        # index, new width or height (LCD-space)
     image_resize_requested = pyqtSignal(int, int, int)  # index, target_width, target_height (LCD-space)
+    element_hovered = pyqtSignal(int)              # index, or -1 when no element is hovered
     drag_started = pyqtSignal()
     drag_finished = pyqtSignal()
 
@@ -1173,6 +1252,8 @@ class ScreenPreviewCanvas(QWidget):
         self._resize_kind = None  # "bar" or "image" -- which resize gesture is active
         self._resize_start_x = 0
         self._resize_start_width = 0
+        self._resize_start_y = 0
+        self._resize_start_height = 0
         # Live target size while dragging an image's corner handle --
         # separate from el["width"/"height"] on purpose: the actual
         # bitmap only gets regenerated by a background ImageResizeWorker
@@ -1184,12 +1265,15 @@ class ScreenPreviewCanvas(QWidget):
         # This is purely the visual target for the dashed selection box
         # while the real regeneration catches up in the background.
         self._image_resize_preview_wh = None
-        self._hover_index = None  # bar element the mouse is currently near -- only ITS handle is drawn
+        self._hover_index = None
         self.setFixedSize(LCD_WIDTH * PREVIEW_SCALE, LCD_HEIGHT * PREVIEW_SCALE)
         self.setMouseTracking(True)
         self.setCursor(Qt.ArrowCursor)
 
     def set_data(self, pixmap, elements, bounds=None):
+        if self._elements is not elements and self._hover_index is not None:
+            self._hover_index = None
+            self.element_hovered.emit(-1)
         self._pixmap = pixmap
         self._elements = elements
         self._bounds = bounds or {}
@@ -1235,6 +1319,9 @@ class ScreenPreviewCanvas(QWidget):
             x1, y1 = b["label_x1"], b["label_y1"]
             x2 = b.get("value_x2", b["label_x2"] + 30)
             y2 = max(b["label_y2"], b.get("bar_y2", 0))
+            # Leeres Label (Time/Date): Breite/Hoehe 0 -> Mindestgroesse
+            x2 = max(x2, x1 + 20)
+            y2 = max(y2, y1 + ELEMENT_HIT_H)
             return QRect(x1 * PREVIEW_SCALE, y1 * PREVIEW_SCALE,
                          (x2 - x1) * PREVIEW_SCALE, (y2 - y1) * PREVIEW_SCALE)
         # Fallback for the brief window before the first real preview
@@ -1271,6 +1358,10 @@ class ScreenPreviewCanvas(QWidget):
             hy = (el["y"] + el["height"]) * PREVIEW_SCALE
             return QRect(hx - r, hy - r, r * 2, r * 2)
         if b and "bar_x2" in b:
+            if b.get("vertical", 0):
+                hx = ((b["bar_x1"] + b["bar_x2"]) * PREVIEW_SCALE) // 2
+                hy = b["bar_y2"] * PREVIEW_SCALE
+                return QRect(hx - r, hy - r, r * 2, r * 2)
             # Exactly where the real bar ends -- this is the fix for
             # the handle drifting away from the actual bar, reported
             # directly as the preview being "hard to control."
@@ -1328,6 +1419,10 @@ class ScreenPreviewCanvas(QWidget):
             painter.setBrush(QColor(70, 140, 230, 180))
             painter.drawRect(self._resize_handle_rect(handle_owner))
         active = self._drag_index if self._drag_index is not None else self._resize_index
+        if self._hover_index is not None and active is None:
+            painter.setPen(QPen(QColor(255, 190, 40), 2, Qt.DashLine))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(self._element_rect(self._hover_index))
         if active is not None:
             painter.setPen(QPen(QColor(70, 140, 230), 2, Qt.DashLine))
             painter.setBrush(Qt.NoBrush)
@@ -1355,6 +1450,10 @@ class ScreenPreviewCanvas(QWidget):
                 # needed to change a visualizer's box size -- resize is
                 # a cheap, direct, synchronous width/height update.
                 self._resize_kind = "visualizer"
+            elif el.get("orientation") == "vertical":
+                self._resize_kind = "vbar"
+                self._resize_start_y = event.pos().y()
+                self._resize_start_height = el.get("height", 28)
             else:
                 self._resize_kind = "bar"
                 self._resize_start_x = event.pos().x()
@@ -1399,6 +1498,19 @@ class ScreenPreviewCanvas(QWidget):
             self.update()
             return
 
+        if self._resize_index is not None and self._resize_kind == "vbar":
+            self.setCursor(Qt.SizeVerCursor)
+            delta = round((event.pos().y() - self._resize_start_y) / PREVIEW_SCALE)
+            el = self._elements[self._resize_index]
+            max_height = min(MAX_BAR_HEIGHT, LCD_HEIGHT - el["y"])
+            new_height = max(min(MIN_BAR_HEIGHT, max_height),
+                             min(max_height, self._resize_start_height + delta))
+            if el.get("height", 28) != new_height:
+                el["height"] = new_height
+                self.element_resized.emit(self._resize_index, new_height)
+            self.update()
+            return
+
         if self._resize_index is not None:
             self.setCursor(Qt.SizeHorCursor)
             delta = round((event.pos().x() - self._resize_start_x) / PREVIEW_SCALE)
@@ -1413,13 +1525,15 @@ class ScreenPreviewCanvas(QWidget):
         if self._drag_index is None:
             idx = self._element_at(event.pos())
             over_handle = self._resize_handle_at(event.pos()) is not None
-            new_hover = idx if (idx is not None and self._resizable(self._elements[idx])) else None
+            new_hover = idx
             if new_hover != self._hover_index:
                 self._hover_index = new_hover
+                self.element_hovered.emit(-1 if new_hover is None else new_hover)
                 self.update()
             if over_handle:
                 is_image = idx is not None and self._elements[idx].get("kind") == "image"
-                self.setCursor(Qt.SizeFDiagCursor if is_image else Qt.SizeHorCursor)
+                is_vertical = idx is not None and self._elements[idx].get("orientation") == "vertical"
+                self.setCursor(Qt.SizeFDiagCursor if is_image else (Qt.SizeVerCursor if is_vertical else Qt.SizeHorCursor))
             elif idx is not None:
                 self.setCursor(Qt.OpenHandCursor)
             else:
@@ -1469,6 +1583,7 @@ class ScreenPreviewCanvas(QWidget):
     def leaveEvent(self, event):
         if self._hover_index is not None:
             self._hover_index = None
+            self.element_hovered.emit(-1)
             self.update()
 
 
@@ -1523,11 +1638,14 @@ class CustomScreensTab(QWidget):
         super().__init__()
         self.current_screen = "L2"
         self.config = load_custom_screens()
+        self._element_rows = []
 
         root = QHBoxLayout()
+        root.setContentsMargins(16, 14, 16, 14)
+        root.setSpacing(16)
 
         canvas_col = QVBoxLayout()
-        canvas_col.setSpacing(6)
+        canvas_col.setSpacing(12)
 
         screen_row = QHBoxLayout()
         screen_row.setSpacing(8)
@@ -1555,6 +1673,7 @@ class CustomScreensTab(QWidget):
         self.preview_canvas.element_moved.connect(self.on_element_dragged)
         self.preview_canvas.element_resized.connect(self.on_element_resized)
         self.preview_canvas.image_resize_requested.connect(self.on_image_resize_requested)
+        self.preview_canvas.element_hovered.connect(self.on_preview_element_hovered)
         self.preview_canvas.drag_started.connect(self.on_drag_started)
         self.preview_canvas.drag_finished.connect(self.on_drag_finished)
         # Image-resize regen runs on a background ImageResizeWorker (see
@@ -1575,6 +1694,7 @@ class CustomScreensTab(QWidget):
         self._image_resize_next = None
         self._image_resize_screen = None
         self._image_resize_el = None
+        canvas_col.addStretch(1)
         canvas_col.addWidget(self.preview_canvas, alignment=Qt.AlignHCenter)
 
         drag_hint = QLabel(
@@ -1584,19 +1704,23 @@ class CustomScreensTab(QWidget):
         drag_hint.setWordWrap(True)
         drag_hint.setObjectName("Status")
         canvas_col.addWidget(drag_hint)
-        canvas_col.addStretch()
+        canvas_col.addStretch(1)
         root.addLayout(canvas_col, stretch=1)
 
         panel = QWidget()
         panel.setObjectName("Panel")
         panel.setFixedWidth(CUSTOM_SCREENS_PANEL_WIDTH)
         panel_layout = QVBoxLayout()
+        panel_layout.setContentsMargins(14, 14, 14, 14)
+        panel_layout.setSpacing(8)
 
-        title = QLabel("Custom Screens")
+        title = QLabel("LCD Screens")
         title.setObjectName("Title")
         panel_layout.addWidget(title)
 
-        panel_layout.addWidget(QLabel("Add Element:"))
+        add_section = QLabel("Add Element")
+        add_section.setObjectName("PanelSection")
+        panel_layout.addWidget(add_section)
         self.sensor_combo = QComboBox()
         for key, label in SENSOR_CHOICES:
             self.sensor_combo.addItem(label, key)
@@ -1615,18 +1739,37 @@ class CustomScreensTab(QWidget):
         self.style_combo.addItem("Number", "number")
         self.style_combo.addItem("Bar", "bar")
         self.style_combo.currentIndexChanged.connect(self.on_style_changed)
-        panel_layout.addWidget(self.style_combo)
+
+        self.orientation_label = QLabel("Bar Orientation:")
+        self.orientation_label.setToolTip(
+            "Vertical bars show a compact label above the fill; resize them by dragging the lower handle."
+        )
+        self.orientation_combo = QComboBox()
+        self.orientation_combo.addItem("Horizontal", "horizontal")
+        self.orientation_combo.addItem("Vertical", "vertical")
 
         # Direct request: "id like to be able to resize elements".
         # Shared between new sensor elements and new text elements --
         # both just render through g15r_renderString at whatever size
         # this picks (see FONT_SIZE_CHOICES). Applies to the sensor's
         # VALUE only; the label always stays the fixed custom font.
-        panel_layout.addWidget(QLabel("Text Size:"))
+        display_options = QGridLayout()
+        display_options.setHorizontalSpacing(10)
+        display_options.setVerticalSpacing(4)
+        display_options.addWidget(QLabel("Display style:"), 0, 0)
+        display_options.addWidget(QLabel("Text size:"), 0, 1)
+        display_options.addWidget(self.style_combo, 1, 0)
         self.font_size_combo = QComboBox()
         for value, label in FONT_SIZE_CHOICES:
             self.font_size_combo.addItem(label, value)
-        panel_layout.addWidget(self.font_size_combo)
+        display_options.addWidget(self.font_size_combo, 1, 1)
+        panel_layout.addLayout(display_options)
+
+        orientation_row = QHBoxLayout()
+        orientation_row.setContentsMargins(0, 0, 0, 0)
+        orientation_row.addWidget(self.orientation_label)
+        orientation_row.addWidget(self.orientation_combo, stretch=1)
+        panel_layout.addLayout(orientation_row)
         self.on_style_changed()  # style_combo starts on "Number" -- sync Large/Huge availability now
 
         self.bar_hint_label = QLabel(
@@ -1646,6 +1789,21 @@ class CustomScreensTab(QWidget):
         add_btn.clicked.connect(self.on_add_element)
         panel_layout.addWidget(add_btn)
 
+        self.layout_preset_combo = QComboBox()
+        self.layout_preset_combo.addItem("CPU / GPU performance", "performance")
+        self.layout_preset_combo.addItem("Temperature overview", "temperatures")
+        self.layout_preset_combo.addItem("System overview", "system")
+        self.layout_preset_combo.setToolTip("Select a ready-made layout for the selected LCD screen.")
+        panel_layout.addWidget(self.layout_preset_combo)
+        self.apply_layout_btn = QPushButton("Apply layout preset...")
+        self.apply_layout_btn.setObjectName("PanelButton")
+        self.apply_layout_btn.setToolTip(
+            "Replace the selected screen with a dashboard preset. "
+            "You can move and edit every element afterwards."
+        )
+        self.apply_layout_btn.clicked.connect(self.on_apply_layout_preset)
+        panel_layout.addWidget(self.apply_layout_btn)
+
         # Direct report: "gui buttons are ambigious and not that well
         # placed" -- Import Image/Add Text/Add Visualizer were stacked
         # directly under "Add" with nothing to show they're independent
@@ -1658,7 +1816,7 @@ class CustomScreensTab(QWidget):
         panel_layout.addWidget(elements_sep)
         panel_layout.addSpacing(4)
         other_elements_label = QLabel("Other elements:")
-        other_elements_label.setObjectName("Status")
+        other_elements_label.setObjectName("PanelSection")
         panel_layout.addWidget(other_elements_label)
 
         self.import_image_btn = QPushButton("Import Image...")
@@ -1697,15 +1855,14 @@ class CustomScreensTab(QWidget):
         self.fix_overflow_btn.hide()
         panel_layout.addWidget(self.fix_overflow_btn)
 
-        panel_layout.addWidget(QLabel("Elements on this screen:"))
-        # Fixed-height scroll area -- previously a long unbounded list
-        # of elements would push the whole layout down past the
-        # preview as you added more (reported directly: "if i add too
-        # many items they just fall under the preview screen"). This
-        # caps it so the window shape never depends on element count.
+        elements_section = QLabel("Elements on this screen")
+        elements_section.setObjectName("PanelSection")
+        panel_layout.addWidget(elements_section)
+        # Let the element list use the remaining panel height so its
+        # visible area grows with the window instead of wasting space.
         elements_scroll = QScrollArea()
         elements_scroll.setWidgetResizable(True)
-        elements_scroll.setFixedHeight(180)
+        elements_scroll.setMinimumHeight(150)
         elements_scroll.setFrameShape(QFrame.NoFrame)
         elements_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         elements_container = QWidget()
@@ -1715,9 +1872,7 @@ class CustomScreensTab(QWidget):
         self.elements_layout.addStretch()
         elements_container.setLayout(self.elements_layout)
         elements_scroll.setWidget(elements_container)
-        panel_layout.addWidget(elements_scroll)
-
-        panel_layout.addStretch()
+        panel_layout.addWidget(elements_scroll, stretch=1)
         panel.setLayout(panel_layout)
         root.addWidget(panel)
 
@@ -1750,6 +1905,11 @@ class CustomScreensTab(QWidget):
         self.sensor_combo.setToolTip(l1_reason)
         self.style_combo.setEnabled(editable)
         self.style_combo.setToolTip(l1_reason)
+        show_orientation = editable and self.style_combo.currentData() == "bar"
+        self.orientation_combo.setEnabled(show_orientation)
+        self.orientation_combo.setToolTip(l1_reason)
+        self.orientation_label.setVisible(show_orientation)
+        self.orientation_combo.setVisible(show_orientation)
         self.add_btn.setEnabled(editable)
         self.add_btn.setToolTip(l1_reason)
         self.import_image_btn.setEnabled(editable)
@@ -1784,6 +1944,11 @@ class CustomScreensTab(QWidget):
             item.setEnabled(not (is_bar and value > MAX_BAR_FONT_SIZE))
         if is_bar and self.font_size_combo.currentData() > MAX_BAR_FONT_SIZE:
             self.font_size_combo.setCurrentIndex(MAX_BAR_FONT_SIZE)
+        editable = self.current_screen != "L1"
+        show_orientation = editable and is_bar
+        self.orientation_combo.setEnabled(show_orientation)
+        self.orientation_label.setVisible(show_orientation)
+        self.orientation_combo.setVisible(show_orientation)
 
     def screen_number(self):
         # L1 used to hardcode to 1 (the clock) always -- but L1 really
@@ -1813,8 +1978,8 @@ class CustomScreensTab(QWidget):
             return  # button is disabled for this case, this is just a safety guard
         elements = self.config[self.current_screen]
         sensor_count = sum(1 for el in elements if el.get("kind", "sensor") == "sensor")
-        if sensor_count >= 8:
-            QMessageBox.warning(self, "Screen full", "Each screen supports up to 8 sensor elements.")
+        if sensor_count >= 16:
+            QMessageBox.warning(self, "Screen full", "Each screen supports up to 16 sensor elements.")
             return
         # No X/Y fields anymore -- new elements land at a default spot
         # (stacked below whatever's already there) and you drag them
@@ -1831,15 +1996,86 @@ class CustomScreensTab(QWidget):
         # element never lands on top of whatever was added right
         # before it, regardless of kind.
         default_y = (6 + 12 * len(elements)) % LCD_HEIGHT
+        orientation = self.orientation_combo.currentData() if self.style_combo.currentData() == "bar" else "horizontal"
         elements.append({
             "kind": "sensor",
             "sensor": self.sensor_combo.currentData(),
             "style": self.style_combo.currentData(),
+            "orientation": orientation,
             "x": 6,
             "y": default_y,
-            "width": 40,
+            "width": 8 if orientation == "vertical" else 40,
+            "height": 28,
             "font_size": self.font_size_combo.currentData(),
         })
+        sensor = elements[-1]["sensor"]
+        if sensor in DATETIME_FORMAT_DEFAULTS:
+            elements[-1]["format"] = DATETIME_FORMAT_DEFAULTS[sensor]
+        save_custom_screens(self.config)
+        self.refresh_elements_list()
+        self.refresh_preview()
+
+    def on_apply_layout_preset(self):
+        if self.current_screen == "L1":
+            return
+        preset = self.layout_preset_combo.currentData()
+        preset_names = {
+            "performance": "CPU / GPU performance",
+            "temperatures": "Temperature overview",
+            "system": "System overview",
+        }
+        answer = QMessageBox.question(
+            self,
+            "Apply dashboard preset",
+            f"Replace all elements on {self.current_screen} with the "
+            f"{preset_names[preset]} layout?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+
+        def sensor(key, x, y, style="number", width=40, orientation="horizontal", height=28):
+            element = {
+                "kind": "sensor", "sensor": key, "style": style,
+                "orientation": orientation, "x": x, "y": y,
+                "width": width, "height": height, "font_size": 0,
+            }
+            if key in DATETIME_FORMAT_DEFAULTS:
+                element["format"] = DATETIME_FORMAT_DEFAULTS[key]
+            return element
+
+        if preset == "performance":
+            elements = [
+                sensor(f"CPU_CORE_{core}", core * 10, 11, "bar", 8, "vertical", 29)
+                for core in range(8)
+            ]
+            elements.extend([
+                sensor("GPU_EDGE_TEMP", 80, 8),
+                sensor("GPU_PCT", 104, 17, "bar", 10, "vertical", 24),
+                sensor("RAM_PCT", 117, 1, "bar", 6),
+                sensor("NET_UP", 117, 20),
+                sensor("NET_DOWN", 117, 31),
+                {"kind": "text", "content": "CPU", "x": 0, "y": 1, "font_size": 0},
+                {"kind": "text", "content": "GPU", "x": 80, "y": 1, "font_size": 0},
+            ])
+        elif preset == "temperatures":
+            elements = [
+                sensor("CPU_TEMP", 2, 2),
+                sensor("GPU_EDGE_TEMP", 82, 2),
+                sensor("MAXTEMP", 2, 23),
+                sensor("GPU_HOTSPOT_TEMP", 82, 23),
+                sensor("GPU_VRAM_TEMP", 2, 32),
+            ]
+        else:
+            elements = [
+                sensor("CPU_PCT", 2, 1, "bar", 34),
+                sensor("RAM_PCT", 2, 14, "bar", 34),
+                sensor("GPU_PCT", 2, 27, "bar", 34),
+                {**sensor("TIME", 100, 2), "label": "TIME"},
+                {**sensor("DATE", 100, 18), "label": "DATE"},
+            ]
+        self.config[self.current_screen] = elements
         save_custom_screens(self.config)
         self.refresh_elements_list()
         self.refresh_preview()
@@ -2011,6 +2247,35 @@ class CustomScreensTab(QWidget):
         self.refresh_elements_list()
         self.refresh_preview()
 
+    def on_element_label_edited(self, index, value):
+        elements = self.config.get(self.current_screen, [])
+        if index < 0 or index >= len(elements):
+            return
+        el = elements[index]
+        if el.get("kind") == "text":
+            content = value.strip()[:47]
+            if not content:
+                return
+            el["content"] = content
+        elif el.get("kind", "sensor") == "sensor":
+            el["label"] = value.strip()[:31]
+        else:
+            return
+        save_custom_screens(self.config)
+        self.refresh_preview()
+
+    def on_element_format_changed(self, index, sensor, value):
+        elements = self.config.get(self.current_screen, [])
+        if index < 0 or index >= len(elements):
+            return
+        el = elements[index]
+        valid_formats = {choice for choice, _ in DATETIME_FORMAT_CHOICES.get(sensor, [])}
+        if el.get("sensor") != sensor or value not in valid_formats:
+            return
+        el["format"] = value
+        save_custom_screens(self.config)
+        self.refresh_preview()
+
     def on_reset_position(self, index):
         # Direct request: "add a 'reset position' button for elements,
         # in case i lose them off screen too" -- always snaps back to
@@ -2155,6 +2420,8 @@ class CustomScreensTab(QWidget):
             item = self.elements_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+        self._element_rows = []
+        self.on_preview_element_hovered(-1)
 
         if self.current_screen == "L1":
             self.fix_overflow_btn.hide()
@@ -2192,47 +2459,97 @@ class CustomScreensTab(QWidget):
         for i, el in enumerate(elements):
             row = QHBoxLayout()
             row.setContentsMargins(0, 0, 0, 0)
+            kind = el.get("kind", "sensor")
+            has_size_btn = kind in ("sensor", "text")
             # Position/width shown on the canvas itself now (drag to
             # move, drag the handle to resize) -- repeating exact
             # coordinates here just made rows overflow the narrow panel
             # and need a horizontal scrollbar, so this stays short.
-            if el.get("kind") == "image":
+            if kind == "image":
                 name = Path(el["path"]).stem
                 text = QLabel(f"Image: {name}")
                 text.setToolTip(f"x={el['x']} y={el['y']} {el['width']}x{el['height']}px")
-            elif el.get("kind") == "text":
-                shown = el["content"] if len(el["content"]) <= 20 else el["content"][:17] + "..."
-                text = QLabel(f'Text: "{shown}"')
-                text.setToolTip(f"x={el['x']} y={el['y']}")
-            elif el.get("kind") == "visualizer":
+            elif kind == "text":
+                text = QLineEdit(el["content"])
+                text.setPlaceholderText("LCD text")
+                text.setAccessibleName("Text shown on the LCD")
+                text.setToolTip("Edit the text shown on the LCD, then press Enter.")
+                text.editingFinished.connect(
+                    lambda idx=i, editor=text: self.on_element_label_edited(idx, editor.text())
+                )
+            elif kind == "visualizer":
                 text = QLabel("Visualizer (live audio)")
                 text.setToolTip(f"x={el['x']} y={el['y']} {el['width']}x{el['height']}px")
             else:
-                label = SENSOR_LABELS.get(el["sensor"], el["sensor"])
-                text = QLabel(f"{label} – {el['style']}")
-                text.setToolTip(f"x={el['x']} y={el['y']}" + (f" width={el.get('width', 40)}" if el.get("style") == "bar" else ""))
-            text.setStyleSheet("font-size: 11px;")
-            # Real regression found by direct testing: a long row label
-            # (e.g. "Media: Song Title – number") could push the ✕
-            # remove button clean off the visible panel -- "the remove
-            # vutton is gone from the sloppy gui". Elide with Qt's own
-            # real font-metric-based truncation (not a guessed character
-            # count) to whatever's actually left after the size/remove
-            # buttons, so the row's total width can never exceed the
-            # panel and the remove button is always reachable. Full text
-            # stays in the tooltip.
-            has_size_btn = el.get("kind") in ("sensor", "text")
-            reserved = 24 + 24 + 20 + (56 if has_size_btn else 0)  # remove_btn + reset_btn + panel margins/spacing + size_btn if present
-            elide_budget = max(20, CUSTOM_SCREENS_PANEL_WIDTH - reserved)
-            full_text = text.text()
-            text.setText(QFontMetrics(text.font()).elidedText(full_text, Qt.ElideRight, elide_budget))
-            if text.toolTip():
-                text.setToolTip(full_text + "\n" + text.toolTip())
-            else:
-                text.setToolTip(full_text)
+                sensor = el["sensor"]
+                sensor_name = SENSOR_LABELS.get(sensor, sensor)
+                if sensor in DATETIME_FORMAT_CHOICES:
+                    text = QComboBox()
+                    text.setAccessibleName(f"{sensor_name} format")
+                    text.setToolTip(f"Choose the {sensor_name.lower()} format; LCD labels are not used.")
+                    compact_formats = {
+                        "TIME": {
+                            "hms": "24h+S",
+                            "hm": "24h",
+                            "ampm": "12h",
+                        },
+                        "DATE": {
+                            "short": "DDMon",
+                            "eu": "EU 4Y",
+                            "eu_short": "EU",
+                            "iso": "ISO",
+                        },
+                    }
+                    for value, label in DATETIME_FORMAT_CHOICES[sensor]:
+                        text.addItem(compact_formats[sensor][value], value)
+                        text.setItemData(text.count() - 1, label, Qt.ToolTipRole)
+                    current_format = el.get("format") or DATETIME_FORMAT_DEFAULTS[sensor]
+                    format_index = text.findData(current_format)
+                    if format_index >= 0:
+                        text.setCurrentIndex(format_index)
+                    text.currentIndexChanged.connect(
+                        lambda _, idx=i, selected_sensor=sensor, combo=text:
+                        self.on_element_format_changed(idx, selected_sensor, combo.currentData())
+                    )
+                else:
+                    label = el.get("label") or DEFAULT_SENSOR_DISPLAY_LABELS.get(
+                        sensor, sensor_name
+                    )
+                    text = QLineEdit(label)
+                    text.setPlaceholderText("LCD label")
+                    text.setAccessibleName(f"LCD label for {sensor}")
+                    orientation = (
+                        f", {el['orientation']}"
+                        if el.get("style") == "bar" and el.get("orientation") == "vertical"
+                        else ""
+                    )
+                    text.setToolTip(
+                        f"Edit LCD label; press Enter to save.\nSensor: {sensor_name}"
+                        f"\nDisplay: {el['style']}{orientation}"
+                        f"\nx={el['x']} y={el['y']}"
+                        + (f" width={el.get('width', 40)}" if el.get("style") == "bar" else "")
+                    )
+                    text.editingFinished.connect(
+                        lambda idx=i, editor=text: self.on_element_label_edited(idx, editor.text())
+                    )
+            text.setStyleSheet("font-size: 11px; padding: 2px;")
+            text.setFixedSize(ELEMENT_ROW_FIELD_WIDTH, 30)
+            # Keep the primary cell fixed-width; static names are
+            # elided to its usable width and preserved in the tooltip.
+            if isinstance(text, QLabel):
+                full_text = text.text()
+                text.setText(
+                    QFontMetrics(text.font()).elidedText(
+                        full_text, Qt.ElideRight, ELEMENT_ROW_FIELD_WIDTH - 8
+                    )
+                )
+                if text.toolTip():
+                    text.setToolTip(full_text + "\n" + text.toolTip())
+                else:
+                    text.setToolTip(full_text)
             row.addWidget(text)
             row.addStretch()
-            if el.get("kind") in ("sensor", "text"):
+            if has_size_btn:
                 # Direct request: "id like to be able to resize
                 # elements". No drag handle here on purpose -- the
                 # library only has 4 discrete text sizes (no continuous
@@ -2240,31 +2557,56 @@ class CustomScreensTab(QWidget):
                 # honest equivalent of resizing for these element kinds.
                 size_label = FONT_SIZE_CHOICES[el.get("font_size", 0)][1]
                 size_btn = QPushButton(size_label)
-                size_btn.setFixedWidth(52)
+                size_btn.setFixedSize(56, 30)
                 size_btn.setStyleSheet("padding: 1px; font-size: 10px;")
                 size_btn.setToolTip("Click to cycle text size: Small -> Medium -> Large -> Huge")
                 size_btn.clicked.connect(lambda _, idx=i: self.on_cycle_font_size(idx))
                 row.addWidget(size_btn)
+            else:
+                size_spacer = QWidget()
+                size_spacer.setFixedSize(56, 30)
+                row.addWidget(size_spacer)
             # Direct request: "add a 'reset position' button for
             # elements, in case i lose them off screen too" -- snaps
             # x/y back to the visible top-left corner regardless of
             # element kind, so a dragged-off-screen element is always
             # recoverable without having to guess at coordinates.
             reset_btn = QPushButton("⌂")
-            reset_btn.setFixedWidth(24)
+            reset_btn.setFixedSize(28, 30)
             reset_btn.setStyleSheet("padding: 1px;")
             reset_btn.setToolTip("Reset position to top-left (use if you've dragged this off-screen)")
             reset_btn.clicked.connect(lambda _, idx=i: self.on_reset_position(idx))
             row.addWidget(reset_btn)
             remove_btn = QPushButton("✕")
-            remove_btn.setFixedWidth(24)
+            remove_btn.setFixedSize(28, 30)
             remove_btn.setStyleSheet("padding: 1px;")
             remove_btn.clicked.connect(lambda _, idx=i: self.on_remove_element(idx))
             row.addWidget(remove_btn)
             container = QWidget()
             container.setLayout(row)
+            container.setObjectName("ElementRow")
+            container.setStyleSheet(
+                "QWidget#ElementRow { background-color: transparent; "
+                "border: 1px solid transparent; border-radius: 3px; }"
+            )
+            container.setFixedHeight(34)
             self.elements_layout.addWidget(container)
+            self._element_rows.append(container)
         self.elements_layout.addStretch()
+        hovered_index = self.preview_canvas._hover_index
+        if hovered_index is not None:
+            self.on_preview_element_hovered(hovered_index)
+
+    def on_preview_element_hovered(self, index):
+        for row_index, row in enumerate(self._element_rows):
+            hovered = row_index == index
+            row.setStyleSheet(
+                "QWidget#ElementRow { background-color: %s; border: 1px solid %s; "
+                "border-radius: 3px; }" % (
+                    "#26364a" if hovered else "transparent",
+                    "#ffbe28" if hovered else "transparent",
+                )
+            )
 
     def refresh_preview(self):
         # Image resize regen now happens on a background worker (see
@@ -2286,15 +2628,15 @@ class CustomScreensTab(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("G510 LCD Control")
+        self.setWindowTitle("Logitech G510s Control")
         self.setStyleSheet(STYLESHEET)
 
         self.keyboard_tab = KeyboardTab()
         self.custom_tab = CustomScreensTab()
 
         tabs = QTabWidget()
-        tabs.addTab(self.keyboard_tab, "Backlight + G-Keys")
-        tabs.addTab(self.custom_tab, "Custom Screens")
+        tabs.addTab(self.keyboard_tab, "Keyboard & Profiles")
+        tabs.addTab(self.custom_tab, "LCD Screens")
         self.setCentralWidget(tabs)
 
         # Direct request: "make me a save button/feature o dont trust
