@@ -1729,16 +1729,38 @@ class CustomScreensTab(QWidget):
 
         # Keeps the preview live (matches the real daemon's own refresh
         # cadence for these screens) so it feels the same as watching
-        # the actual keyboard.
+        # the actual keyboard. NOT started here -- this tab is hidden
+        # behind "Backlight + G-Keys" at startup, and showEvent()
+        # below is what actually starts it once it's visible (see that
+        # method's comment for why this matters).
         self.preview_timer = QTimer(self)
         self.preview_timer.timeout.connect(self.refresh_preview)
-        self.preview_timer.start(1000)
 
         # Separate, faster timer -- only running while actively
         # dragging -- so the preview visibly follows your mouse instead
         # of waiting up to a second for the next idle tick.
         self.drag_refresh_timer = QTimer(self)
         self.drag_refresh_timer.timeout.connect(self.refresh_preview)
+
+    def showEvent(self, event):
+        # Real inefficiency found via direct audit (user: "figure out
+        # why it takes so much RAM"): preview_timer used to run every
+        # 1s FOREVER once this tab was built, spawning a subprocess and
+        # re-rendering a PPM preview even while the Backlight + G-Keys
+        # tab was the one actually visible. Qt fires showEvent/hideEvent
+        # on a QTabWidget page precisely when it becomes the active/
+        # inactive tab -- the natural hook to only do this work while
+        # someone can actually see it. (This wasn't the GUI's main RAM
+        # cost -- that's normal PyQt5/Qt baseline overhead, confirmed
+        # stable, not leaking -- but it's real wasted CPU/subprocess
+        # churn fixed for free while auditing.)
+        super().showEvent(event)
+        self.preview_timer.start(1000)
+        self.refresh_preview()
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        self.preview_timer.stop()
 
     def select_screen(self, key):
         self.current_screen = key

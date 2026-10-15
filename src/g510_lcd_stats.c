@@ -417,14 +417,21 @@ static void update_media_info(void) {
            browser itself doesn't track it that way.
            MEDIA_MAX_REASONABLE_LEN_S (24h) is a generous real upper
            bound for any genuine track/video length -- past that, the
-           value is garbage, not just "a long podcast". Shown as just
-           elapsed + "LIVE" instead of a fake "/huge-number" total,
-           which is also the honest answer: there IS no fixed total
-           to show. */
+           value is garbage, not just "a long podcast".
+
+           Direct follow-up, confirmed with real measurement before
+           changing anything: polled the browser's raw `position`
+           directly for an actual live premiere every 2s -- it climbed
+           8.7s -> 14.8s then DROPPED BACK to 1.5s and climbed again, a
+           genuine ~15s reset cycle at the source, not anything on this
+           end to smooth or fix. User independently noticed YouTube's
+           own UI doesn't show a timer for this content either, and
+           asked for the obvious correct fix: "if LIVE then no timer"
+           -- showing just "LIVE" is honest; showing a jumpy resetting
+           number next to it isn't. */
         #define MEDIA_MAX_REASONABLE_LEN_S (24 * 3600)
         if (len_s <= 0 || len_s > MEDIA_MAX_REASONABLE_LEN_S) {
-            snprintf(g_media_elapsed, sizeof(g_media_elapsed), "%d:%02d LIVE",
-                     pos_s / 60, pos_s % 60);
+            snprintf(g_media_elapsed, sizeof(g_media_elapsed), "LIVE");
         } else {
             snprintf(g_media_elapsed, sizeof(g_media_elapsed), "%d:%02d/%d:%02d",
                      pos_s / 60, pos_s % 60, len_s / 60, len_s % 60);
@@ -934,8 +941,13 @@ typedef struct {
                             request: "id like the song name and artist always
                             auto centre, text lenghts differ from song to
                             song" (a fixed x can't center text whose width
-                            changes every track). Left unset (0, C's default
-                            for a trailing struct initializer field) on every
+                            changes every track). Also on for MEDIA_ELAPSED:
+                            once a live stream started showing "LIVE" alone
+                            instead of a full "0:15/4:30" string, the fixed
+                            x position (sized for the longer string) left it
+                            looking off-center -- "LIVE is not centered
+                            correctly". Left unset (0, C's default for a
+                            trailing struct initializer field) on every
                             other row below on purpose. */
 } sensor_def_t;
 
@@ -972,7 +984,7 @@ static const sensor_def_t SENSORS[] = {
        self-descriptive, and every pixel matters on this screen. */
     {"MEDIA_TITLE",       "",    0, 0, 1},
     {"MEDIA_ARTIST",      "",    0, 0, 1},
-    {"MEDIA_ELAPSED", "", 0, 0, 0},
+    {"MEDIA_ELAPSED", "", 0, 0, 1},
     {"MB_TEMP1", "MB1", 0, 1, 0},
     {"MB_TEMP2", "MB2", 0, 1, 0},
     {"MB_TEMP3", "MB3", 0, 1, 0},
