@@ -1865,9 +1865,13 @@ static void draw_element(g15canvas *c, element_t *el) {
                                G15_LCD_WIDTH - TEXT_EDGE_MARGIN - el->x);
         label_height = measure_builtin_label_height(sized_label, el->font_size);
         label_w = measure_builtin_label_width(sized_label, el->font_size);
-        draw_builtin_label(c, sized_label, el->x, el->y, el->font_size);
+        if (!def->auto_center) draw_builtin_label(c, sized_label, el->x, el->y, el->font_size);
     }
-    int value_x = el->x + label_w + 4;
+    /* Abstand zwischen Label und Wert: zwei Leerzeichen der gewaehlten Schrift */
+    int gap = 2 * (measure_builtin_text_width("I I", el->font_size) -
+                   measure_builtin_text_width("II", el->font_size));
+    if (gap < 4) gap = 4;
+    int value_x = el->x + label_w + (label_w ? gap : 4);
 
     element_bounds_t *b = (g_element_bounds_count < MAX_ELEMENTS)
         ? &g_element_bounds[g_element_bounds_count++] : NULL;
@@ -1899,11 +1903,15 @@ static void draw_element(g15canvas *c, element_t *el) {
            different track's title/artist is a different width every
            time. el->x (dragging up/down) still moves the row's Y --
            only X is forced to center. */
-        truncate_builtin_text(disp, el->font_size, G15_LCD_WIDTH - 2 * TEXT_EDGE_MARGIN);
+        int label_block = (label_w && !vertical_bar) ? label_w + gap : 0;
+        truncate_builtin_text(disp, el->font_size,
+                              G15_LCD_WIDTH - 2 * TEXT_EDGE_MARGIN - label_block);
         value_w = measure_builtin_text_width(disp, el->font_size);
-        value_x = (G15_LCD_WIDTH - value_w) / 2;
-        if (value_x < TEXT_EDGE_MARGIN) value_x = TEXT_EDGE_MARGIN;
-        if (b) { b->label_x1 = value_x; b->label_x2 = value_x; }
+        int block_x = (G15_LCD_WIDTH - (label_block + value_w)) / 2;
+        if (block_x < TEXT_EDGE_MARGIN) block_x = TEXT_EDGE_MARGIN;
+        value_x = block_x + label_block;
+        if (label_block) draw_builtin_label(c, sized_label, block_x, el->y, el->font_size);
+        if (b) { b->label_x1 = block_x; b->label_x2 = label_block ? block_x + label_w : block_x; }
     }
 
     /* "bar" only ever applies to a sensor with an honest 0-100 scale
