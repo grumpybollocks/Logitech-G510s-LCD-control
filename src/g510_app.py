@@ -447,16 +447,20 @@ class MacroRecordDialog(QDialog):
         layout.addWidget(self.status_label)
 
         self.record_btn = QPushButton("Record")
+        self.record_btn.setToolTip("Start recording a keystroke sequence -- press it again to stop")
         self.record_btn.clicked.connect(self.toggle_recording)
         layout.addWidget(self.record_btn)
 
         btn_row = QHBoxLayout()
         self.save_btn = QPushButton("Save")
+        self.save_btn.setToolTip("Save the recorded keystroke sequence to this G-key")
         self.save_btn.clicked.connect(self.on_save)
         self.save_btn.setEnabled(False)
         clear_btn = QPushButton("Clear")
+        clear_btn.setToolTip("Remove whatever is currently assigned to this G-key")
         clear_btn.clicked.connect(self.on_clear)
         cancel_btn = QPushButton("Cancel")
+        cancel_btn.setToolTip("Close without changing this G-key's assignment")
         cancel_btn.clicked.connect(self.reject)
         btn_row.addWidget(self.save_btn)
         btn_row.addWidget(clear_btn)
@@ -467,9 +471,11 @@ class MacroRecordDialog(QDialog):
         cmd_row = QHBoxLayout()
         self.command_edit = QLineEdit()
         self.command_edit.setPlaceholderText("e.g. notify-send hello")
+        self.command_edit.setToolTip("Any shell command to run when this G-key is pressed, instead of replaying keystrokes")
         if isinstance(existing, dict) and existing.get("type") == "command":
             self.command_edit.setText(existing.get("value", ""))
         save_cmd_btn = QPushButton("Save Command")
+        save_cmd_btn.setToolTip("Save this shell command to this G-key")
         save_cmd_btn.clicked.connect(self.on_save_command)
         cmd_row.addWidget(self.command_edit)
         cmd_row.addWidget(save_cmd_btn)
@@ -592,8 +598,10 @@ class KeyboardTab(QWidget):
         hex_row = QHBoxLayout()
         self.hex_edit = QLineEdit()
         self.hex_edit.setPlaceholderText("8000ff")
+        self.hex_edit.setToolTip("6-digit hex color, no # needed")
         self.hex_edit.returnPressed.connect(self.on_apply_hex)
         hex_apply_btn = QPushButton("Apply")
+        hex_apply_btn.setToolTip("Preview this hex color on the canvas (click the big Apply button below to send it to the keyboard)")
         hex_apply_btn.setObjectName("PanelPrimary")
         hex_apply_btn.clicked.connect(self.on_apply_hex)
         hex_row.addWidget(self.hex_edit)
@@ -622,10 +630,12 @@ class KeyboardTab(QWidget):
         panel_layout.addSpacing(4)
 
         apply_btn = QPushButton("Apply")
+        apply_btn.setToolTip("Send this color to the keyboard right now, and make it the boot default")
         apply_btn.setObjectName("PanelPrimary")
         apply_btn.clicked.connect(self.on_apply)
         panel_layout.addWidget(apply_btn)
         set_default_btn = QPushButton("Set as Default")
+        set_default_btn.setToolTip("Save this color as the boot default WITHOUT changing the keyboard's live color right now")
         set_default_btn.setObjectName("PanelButton")
         set_default_btn.clicked.connect(self.on_set_as_default)
         panel_layout.addWidget(set_default_btn)
@@ -642,9 +652,15 @@ class KeyboardTab(QWidget):
         panel_layout.addWidget(service_label)
         service_row = QHBoxLayout()
         service_row.setSpacing(4)
+        service_tooltips = {
+            "start": "Start all 3 G510 services (LCD stats, buttons, macros) if they aren't running",
+            "stop": "Stop all 3 G510 services -- the LCD, buttons, and macros will stop responding",
+            "restart": "Restart all 3 G510 services -- use this after a config change that isn't picking up",
+        }
         for label, action in (("Start", "start"), ("Stop", "stop"), ("Restart", "restart")):
             btn = QPushButton(label)
             btn.setObjectName("Discreet")
+            btn.setToolTip(service_tooltips[action])
             btn.clicked.connect(lambda _, a=action: self.on_service_action(a))
             service_row.addWidget(btn)
         panel_layout.addLayout(service_row)
@@ -1535,6 +1551,7 @@ class CustomScreensTab(QWidget):
         for key in SCREEN_PREVIEW_KEYS:
             btn = QPushButton(key)
             btn.setCheckable(True)
+            btn.setToolTip("Edit the L1 clock screen (reference only)" if key == "L1" else f"Edit the {key} screen, shown by pressing the {key} button on the keyboard")
             btn.setStyleSheet(
                 "QPushButton { font-weight: bold; padding: 4px 12px; text-align: center; }"
                 "QPushButton:checked { background-color: #4a90d9; color: white; }"
@@ -1585,6 +1602,16 @@ class CustomScreensTab(QWidget):
         drag_hint.setObjectName("Status")
         canvas_col.addWidget(drag_hint)
         canvas_col.addStretch()
+        # Direct request: "id like the display preview...moved a
+        # little bit towards the center so the whole GUI looks more
+        # symmetrical" -- the preview is centered WITHIN canvas_col,
+        # but canvas_col only gets the space left over after the
+        # fixed-width panel on the right, so its centered content
+        # actually sits CUSTOM_SCREENS_PANEL_WIDTH/2 px left of the
+        # window's true center. Adding that same half-width as a fixed
+        # left margin here closes exactly half that gap -- real
+        # geometry, not a guessed pixel count.
+        root.addSpacing(CUSTOM_SCREENS_PANEL_WIDTH // 2)
         root.addLayout(canvas_col, stretch=1)
 
         panel = QWidget()
@@ -1598,6 +1625,7 @@ class CustomScreensTab(QWidget):
 
         panel_layout.addWidget(QLabel("Add Element:"))
         self.sensor_combo = QComboBox()
+        self.sensor_combo.setToolTip("Which stat/sensor to add to this screen -- see the description below once picked")
         for key, label in SENSOR_CHOICES:
             self.sensor_combo.addItem(label, key)
         self.sensor_combo.currentIndexChanged.connect(self.on_sensor_changed)
@@ -1612,6 +1640,7 @@ class CustomScreensTab(QWidget):
         panel_layout.addWidget(self.sensor_desc_label)
 
         self.style_combo = QComboBox()
+        self.style_combo.setToolTip("Number: shows the raw value as text. Bar: a filled progress bar (only for sensors with a real 0-100 scale)")
         self.style_combo.addItem("Number", "number")
         self.style_combo.addItem("Bar", "bar")
         self.style_combo.currentIndexChanged.connect(self.on_style_changed)
@@ -1624,6 +1653,7 @@ class CustomScreensTab(QWidget):
         # VALUE only; the label always stays the fixed custom font.
         panel_layout.addWidget(QLabel("Text Size:"))
         self.font_size_combo = QComboBox()
+        self.font_size_combo.setToolTip("Size of this element's value text once added (Large/Huge are disabled for Bar style -- no room next to the bar)")
         for value, label in FONT_SIZE_CHOICES:
             self.font_size_combo.addItem(label, value)
         panel_layout.addWidget(self.font_size_combo)
@@ -1642,6 +1672,7 @@ class CustomScreensTab(QWidget):
         self.on_sensor_changed()
 
         self.add_btn = add_btn = QPushButton("Add")
+        add_btn.setToolTip("Add the selected sensor to this screen -- drag it into place afterward")
         add_btn.setObjectName("PanelPrimary")
         add_btn.clicked.connect(self.on_add_element)
         panel_layout.addWidget(add_btn)
@@ -1662,11 +1693,13 @@ class CustomScreensTab(QWidget):
         panel_layout.addWidget(other_elements_label)
 
         self.import_image_btn = QPushButton("Import Image...")
+        self.import_image_btn.setToolTip("Import a PNG/image, auto-converted to 1-bit for this screen -- simple high-contrast logos/icons look best, see G510_README.md")
         self.import_image_btn.setObjectName("PanelButton")
         self.import_image_btn.clicked.connect(self.on_import_image)
         panel_layout.addWidget(self.import_image_btn)
 
         self.add_text_btn = QPushButton("Add Text...")
+        self.add_text_btn.setToolTip("Add a short freeform label (e.g. a separator or a static caption)")
         self.add_text_btn.setObjectName("PanelButton")
         self.add_text_btn.clicked.connect(self.on_add_text)
         panel_layout.addWidget(self.add_text_btn)
@@ -1692,6 +1725,7 @@ class CustomScreensTab(QWidget):
         # screen edge, with its now off-screen hit-box making it hard
         # to grab back. Only shown when something's actually off-screen.
         self.fix_overflow_btn = QPushButton("Bring off-screen elements back")
+        self.fix_overflow_btn.setToolTip("Pulls any element whose content hangs off the visible screen edge back into view")
         self.fix_overflow_btn.setObjectName("PanelButton")
         self.fix_overflow_btn.clicked.connect(self.on_fix_overflow)
         self.fix_overflow_btn.hide()
@@ -2281,6 +2315,7 @@ class CustomScreensTab(QWidget):
             remove_btn = QPushButton("✕")
             remove_btn.setFixedWidth(24)
             remove_btn.setStyleSheet("padding: 1px;")
+            remove_btn.setToolTip("Remove this element from the screen")
             remove_btn.clicked.connect(lambda _, idx=i: self.on_remove_element(idx))
             row.addWidget(remove_btn)
             container = QWidget()
@@ -2335,8 +2370,14 @@ class MainWindow(QMainWindow):
         # assumes centralWidget() is the QTabWidget itself.
         toolbar = self.addToolBar("Save")
         toolbar.setMovable(False)
-        self.save_all_btn = QPushButton("\U0001F4BE  Save All Settings Now")
+        # Direct report: "the 'save all settings now' button has a
+        # weird rectangle icon before it" -- the floppy-disk emoji
+        # (U+1F4BE) has no matching glyph in this system's font stack,
+        # so it rendered as a tofu box instead. Plain text avoids the
+        # font-coverage gamble entirely.
+        self.save_all_btn = QPushButton("Save All Settings Now")
         self.save_all_btn.setObjectName("saveAllBtn")
+        self.save_all_btn.setToolTip("Re-saves everything and verifies it round-trips through disk correctly -- everything already autosaves, this just confirms it")
         self.save_all_btn.clicked.connect(self.on_save_all)
         toolbar.addWidget(self.save_all_btn)
 
