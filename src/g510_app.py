@@ -1023,6 +1023,7 @@ MAX_IMAGES_PER_SCREEN = 2  # matches MAX_IMAGES in g510_lcd_stats.c
 MAX_TEXTS_PER_SCREEN = 4  # matches MAX_TEXTS in g510_lcd_stats.c
 MAX_VISUALIZERS_PER_SCREEN = 1  # matches MAX_VISUALIZERS in g510_lcd_stats.c -- only one persistent audio-capture stream exists process-wide, a second visualizer element would just duplicate the same bar data
 CUSTOM_SCREENS_PANEL_WIDTH = 290
+CUSTOM_SCREENS_PANEL_MAX_WIDTH = 420
 ELEMENT_ROW_FIELD_WIDTH = 126
 DEFAULT_VISUALIZER_WIDTH = 70
 DEFAULT_VISUALIZER_HEIGHT = 37
@@ -1792,7 +1793,7 @@ class CustomScreensTab(QWidget):
 
         panel = QWidget()
         panel.setObjectName("Panel")
-        panel.setFixedWidth(CUSTOM_SCREENS_PANEL_WIDTH)
+        panel.setMinimumWidth(CUSTOM_SCREENS_PANEL_WIDTH)
         panel_layout = QVBoxLayout()
         panel_layout.setContentsMargins(14, 14, 14, 14)
         panel_layout.setSpacing(8)
@@ -1967,7 +1968,7 @@ class CustomScreensTab(QWidget):
         # visible area grows with the window instead of wasting space.
         elements_scroll = QScrollArea()
         elements_scroll.setWidgetResizable(True)
-        elements_scroll.setMinimumHeight(150)
+        elements_scroll.setMinimumHeight(240)
         elements_scroll.setFrameShape(QFrame.NoFrame)
         elements_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         elements_container = QWidget()
@@ -1979,7 +1980,16 @@ class CustomScreensTab(QWidget):
         elements_scroll.setWidget(elements_container)
         panel_layout.addWidget(elements_scroll, stretch=1)
         panel.setLayout(panel_layout)
-        root.addWidget(panel)
+        # Das ganze Panel scrollt, wenn das Fenster zu niedrig ist, und
+        # darf bei breiten Fenstern etwas wachsen.
+        panel_scroll = QScrollArea()
+        panel_scroll.setWidgetResizable(True)
+        panel_scroll.setFrameShape(QFrame.NoFrame)
+        panel_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        panel_scroll.setMinimumWidth(CUSTOM_SCREENS_PANEL_WIDTH + 18)
+        panel_scroll.setMaximumWidth(CUSTOM_SCREENS_PANEL_MAX_WIDTH)
+        panel_scroll.setWidget(panel)
+        root.addWidget(panel_scroll)
 
         self.setLayout(root)
 
