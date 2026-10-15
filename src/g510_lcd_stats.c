@@ -19,9 +19,28 @@
 #include <math.h>
 #include <unistd.h>
 #include <time.h>
+#include <ctype.h>
 #include <sys/statvfs.h>
 #include <sys/stat.h>
 #include <dirent.h>
+
+/* MEMORY LEAK FIX: in this TTF_SUPPORT build, g15r_initCanvas() calls
+   FT_Init_FreeType(&canvas->ftLib) -- a whole FreeType library (~2.7KB,
+   several allocations) per canvas -- and libg15render has no matching
+   teardown, so every canvas that simply went out of scope leaked one.
+   This program initialises a canvas once per frame in main() (~20fps)
+   plus once per measure_builtin_text_width() call (~73/sec), i.e. ~93
+   leaked libraries/sec = ~1GB/hour of heap (found with glibc mtrace under
+   gdb: 2805 unfreed FT_Init_FreeType libraries in 30s; the service had
+   grown to 8GB after 7.5h). Declare a canvas with G15_CANVAS_AUTO and its
+   FreeType library is released on EVERY scope exit path, including the
+   `continue`s in main()'s loop. Always declare such a canvas `= {0}` too:
+   if FT_Init_FreeType ever fails (a malloc failure) ftLib then stays NULL
+   and the cleanup is a harmless no-op, instead of freeing stack garbage. */
+static void release_canvas_ft(g15canvas *c) {
+    if (c->ftLib) FT_Done_FreeType(c->ftLib);
+}
+#define G15_CANVAS_AUTO __attribute__((cleanup(release_canvas_ft)))
 
 /* Exact port of libg15's dumpPixmapIntoLCDFormat(): converts libg15render's
    row-major MSB-first bitmap into the LCD's vertical "page" wire format. */
@@ -629,6 +648,41 @@ static char g_media_title[64] = "";
 static char g_media_artist[48] = "";
 static char g_media_elapsed[32] = ""; /* wide enough for even an absurdly long podcast (e.g. 9999:59/9999:59) -- -Wformat-truncation caught the original 16-byte buffer as theoretically too small, real warning, not ignored */
 
+/* Real bug, direct report: "its also picking up a (56) which is just
+   a bunch of notifications, needs to be ignored. it used to look nice
+   before." Confirmed directly: for a YouTube live premiere,
+   plasma-browser-integration's own richer title/artist extraction
+   degrades to just the raw BROWSER TAB title ("(56) Real Title -
+   YouTube") instead of the clean video title it normally extracts for
+   regular VOD content -- "(56)" is Brave's own unread-notification-
+   count badge prepended to the tab title, not anything about the
+   video itself. Strips that leading "(<digits>) " badge and the
+   trailing " - YouTube" tab-title suffix regardless of which player
+   line it came from, so a degraded title still displays cleanly.
+   (The missing artist/channel name for this specific content is a
+   separate, real limitation -- confirmed via the full MPRIS metadata
+   dump that NEITHER player source has a channel name available for
+   this particular live stream, not something this function can
+   invent from data that isn't there.) */
+static void strip_browser_tab_noise(char *title) {
+    if (title[0] == '(') {
+        char *close = strchr(title, ')');
+        if (close && close > title + 1 && close[1] == ' ') {
+            int all_digits = 1;
+            for (char *p = title + 1; p < close; p++) {
+                if (!isdigit((unsigned char)*p)) { all_digits = 0; break; }
+            }
+            if (all_digits) memmove(title, close + 2, strlen(close + 2) + 1);
+        }
+    }
+    size_t len = strlen(title);
+    const char *suffix = " - YouTube";
+    size_t suflen = strlen(suffix);
+    if (len > suflen && strcmp(title + len - suflen, suffix) == 0) {
+        title[len - suflen] = 0;
+    }
+}
+
 static void update_media_info(void) {
     g_media_title[0] = 0;
     g_media_artist[0] = 0;
@@ -699,6 +753,7 @@ static void update_media_info(void) {
         if (!have_title || is_plasma) {
             strncpy(title_buf, title, sizeof(title_buf) - 1);
             title_buf[sizeof(title_buf) - 1] = 0;
+            strip_browser_tab_noise(title_buf);
             strncpy(artist_buf, artist, sizeof(artist_buf) - 1);
             artist_buf[sizeof(artist_buf) - 1] = 0;
             have_title = 1;
@@ -755,8 +810,41 @@ static void update_media_info(void) {
     if (have_time && pos_us >= 0 && len_us >= 0) {
         int pos_s = (int)(pos_us / 1000000);
         int len_s = (int)(len_us / 1000000);
-        snprintf(g_media_elapsed, sizeof(g_media_elapsed), "%d:%02d/%d:%02d",
-                 pos_s / 60, pos_s % 60, len_s / 60, len_s % 60);
+        /* Real bug, direct report: on a YouTube "premiere" (a live
+           broadcast, not a normal VOD), the elapsed display showed
+           "0:15/34630872:22" (a nonsense ~65-YEAR total) then reset
+           back to "0:15" and repeated -- a live stream has no real
+           fixed duration, so whatever JS Infinity/NaN the page's
+           <video>.duration reports for it is getting serialized into
+           mpris:length as huge garbage, not a real length in seconds.
+           The position reset is a second, separate symptom of the
+           same root cause: a live stream's reported position is
+           relative to an ever-shifting live buffer window, not a
+           fixed-duration timeline, so "where it left off" genuinely
+           isn't a stable concept the way it is for a normal track --
+           not something fixable by smoothing on this end, since the
+           browser itself doesn't track it that way.
+           MEDIA_MAX_REASONABLE_LEN_S (24h) is a generous real upper
+           bound for any genuine track/video length -- past that, the
+           value is garbage, not just "a long podcast".
+
+           Direct follow-up, confirmed with real measurement before
+           changing anything: polled the browser's raw `position`
+           directly for an actual live premiere every 2s -- it climbed
+           8.7s -> 14.8s then DROPPED BACK to 1.5s and climbed again, a
+           genuine ~15s reset cycle at the source, not anything on this
+           end to smooth or fix. User independently noticed YouTube's
+           own UI doesn't show a timer for this content either, and
+           asked for the obvious correct fix: "if LIVE then no timer"
+           -- showing just "LIVE" is honest; showing a jumpy resetting
+           number next to it isn't. */
+        #define MEDIA_MAX_REASONABLE_LEN_S (24 * 3600)
+        if (len_s <= 0 || len_s > MEDIA_MAX_REASONABLE_LEN_S) {
+            snprintf(g_media_elapsed, sizeof(g_media_elapsed), "LIVE");
+        } else {
+            snprintf(g_media_elapsed, sizeof(g_media_elapsed), "%d:%02d/%d:%02d",
+                     pos_s / 60, pos_s % 60, len_s / 60, len_s % 60);
+        }
     }
 }
 
@@ -1005,7 +1093,7 @@ static void draw_label(g15canvas *c, int x, int y, const char *label) {
    hack. */
 static int measure_builtin_text_width(const char *s, int font_size) {
     if (!s[0]) return 0;
-    g15canvas scratch;
+    g15canvas scratch G15_CANVAS_AUTO = {0};
     g15r_initCanvas(&scratch);
     g15r_clearScreen(&scratch, G15_COLOR_WHITE);
     g15r_renderString(&scratch, (unsigned char*)s, 0, font_size, 0, 0);
@@ -1317,8 +1405,13 @@ typedef struct {
                             request: "id like the song name and artist always
                             auto centre, text lenghts differ from song to
                             song" (a fixed x can't center text whose width
-                            changes every track). Left unset (0, C's default
-                            for a trailing struct initializer field) on every
+                            changes every track). Also on for MEDIA_ELAPSED:
+                            once a live stream started showing "LIVE" alone
+                            instead of a full "0:15/4:30" string, the fixed
+                            x position (sized for the longer string) left it
+                            looking off-center -- "LIVE is not centered
+                            correctly". Left unset (0, C's default for a
+                            trailing struct initializer field) on every
                             other row below on purpose. */
 } sensor_def_t;
 
@@ -1355,7 +1448,7 @@ static const sensor_def_t SENSORS[] = {
        self-descriptive, and every pixel matters on this screen. */
     {"MEDIA_TITLE",       "",    0, 0, 1},
     {"MEDIA_ARTIST",      "",    0, 0, 1},
-    {"MEDIA_ELAPSED", "", 0, 0, 0},
+    {"MEDIA_ELAPSED", "", 0, 0, 1},
     {"MB_TEMP1", "MB1", 0, 1, 0},
     {"MB_TEMP2", "MB2", 0, 1, 0},
     {"MB_TEMP3", "MB3", 0, 1, 0},
@@ -2192,7 +2285,7 @@ int main(int argc, char **argv) {
     if (argc >= 3 && strcmp(argv[1], "--preview") == 0) {
         int screen = atoi(argv[2]);
         const char *outpath = argc >= 4 ? argv[3] : "/tmp/g510_preview.ppm";
-        g15canvas canvas;
+        g15canvas canvas G15_CANVAS_AUTO = {0};
         g15r_initCanvas(&canvas);
         update_net_speed();
         update_nvidia_stats();
@@ -2208,7 +2301,7 @@ int main(int argc, char **argv) {
     }
 
     while (1) {
-        g15canvas canvas;
+        g15canvas canvas G15_CANVAS_AUTO = {0};
         g15r_initCanvas(&canvas);
 
         /* Direct report after actually watching it live: "i can only

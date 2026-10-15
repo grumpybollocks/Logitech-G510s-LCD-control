@@ -57,6 +57,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/wait.h>
+#include <sys/prctl.h>
 #include <signal.h>
 #include <time.h>
 
@@ -175,8 +176,19 @@ static void viz_start_capture(void) {
     viz_init_bar_freqs();
     unlink(viz_capture_path());
     g_viz_read_offset = 0;
+    pid_t parent = getpid();
     pid_t pid = fork();
     if (pid == 0) {
+        /* ORPHAN FIX: the SIGTERM/SIGINT handler below can't run if this
+           process dies by SIGKILL (a systemd MemoryMax kill, `kill -9`, a
+           debugger's `kill`) or a crash -- and then this parec kept
+           recording forever into a DELETED file on the RAM-backed
+           /run/user tmpfs (~170MB/hour each, invisible to `ls`). Found
+           when test runs ended by SIGKILL left 3 of them behind. Ask the
+           kernel to SIGTERM us whenever the parent dies, however it dies;
+           the getppid() check closes the fork()->prctl() race. */
+        prctl(PR_SET_PDEATHSIG, SIGTERM);
+        if (getppid() != parent) _exit(1);
         /* Child: redirect stderr to /dev/null (parec logs connection
            messages there on every start/stop that would otherwise spam
            this service's journal every VIZ_RESTART_SEC). */
