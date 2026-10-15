@@ -712,6 +712,44 @@ static void update_media_info(void) {
     }
     pclose(p);
 
+    /* Fallback fuer Player ohne MPRIS (z. B. radiotray-ng): Der Stream-Titel
+       steht in PulseAudio als media.name ("Interpret - Titel"). */
+    if (!have_title || !title_buf[0]) {
+        FILE *pa = popen("LC_ALL=C pactl list sink-inputs 2>/dev/null", "r");
+        if (pa) {
+            char pl[512], name[256] = "";
+            int corked = 0;
+            while (fgets(pl, sizeof(pl), pa)) {
+                if (strncmp(pl, "Sink Input", 10) == 0) {
+                    if (name[0] && !corked) break;
+                    name[0] = 0; corked = 0;
+                } else if (strstr(pl, "Corked: yes")) {
+                    corked = 1;
+                } else {
+                    char *m = strstr(pl, "media.name = \"");
+                    if (m) {
+                        m += strlen("media.name = \"");
+                        char *q = strrchr(m, '"');
+                        if (q) *q = 0;
+                        snprintf(name, sizeof(name), "%s", m);
+                    }
+                }
+            }
+            pclose(pa);
+            if (name[0] && !corked && strcmp(name, "Playback Stream") != 0
+                    && strcmp(name, "playback") != 0) {
+                char *sep = strstr(name, " - ");
+                if (sep) {
+                    *sep = 0;
+                    snprintf(artist_buf, sizeof(artist_buf), "%.47s", name);
+                    snprintf(title_buf, sizeof(title_buf), "%.63s", sep + 3);
+                } else {
+                    snprintf(title_buf, sizeof(title_buf), "%.63s", name);
+                }
+            }
+        }
+    }
+
     strncpy(g_media_title, title_buf, sizeof(g_media_title) - 1);
     strncpy(g_media_artist, artist_buf, sizeof(g_media_artist) - 1);
     if (have_time && pos_us >= 0 && len_us >= 0) {

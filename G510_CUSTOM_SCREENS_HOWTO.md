@@ -58,3 +58,5 @@ Die Höhe der CPU-Balken zeigt die **Auslastung**, nicht die Temperatur. Linux s
 
 - **Standardbelegung L2–L5:** Ein Klick belegt L2 mit Performance, L3 mit Temperaturen, L4 mit Netzwerk/Festplatte/Uhr und L5 mit Medien. Vorher fragt die Anwendung nach und legt eine Sicherung `custom_screens.txt.vor-standardbelegung` an.
 - **Profile (Spiel, Arbeit, Nacht):** Wähle ein Profil und klicke auf **Profil anwenden**. Die LED-Farbe wird gesetzt (und bleibt auch nach dem Neustart) und der LCD-Bildschirm wechselt: Spiel → L2 (rot), Arbeit → L4 (blau), Nacht → Uhr (dunkelrot).
+
+**Medien ohne MPRIS:** Player wie radiotray-ng (Webradio) melden sich nicht per MPRIS. Für sie liest die Anwendung den Stream-Titel aus PulseAudio/PipeWire; ein Titel der Form „Interpret - Titel“ wird in Interpret und Titel aufgeteilt. Laufzeit (Elapsed) gibt es dort nicht.
