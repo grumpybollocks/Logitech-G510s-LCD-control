@@ -123,7 +123,25 @@ def main():
     dev = _wait_for_device(DEVICE_PATH)
     pf = profile_path()
 
-    active_profile = "M1"
+    # Real bug found via self-audit: this used to hardcode "M1" and
+    # unconditionally overwrite the profile file with it on every
+    # startup -- including every RESTART, e.g. the one that already
+    # happens automatically (Restart=on-failure) if the keyboard gets
+    # unplugged and dev.read()/select() raises. That meant a keyboard
+    # disconnect while M2 or M3 was active silently reset the profile
+    # back to M1 the moment it reconnected -- the GUI reads this same
+    # file (see its own ~500ms poll), so the user would see their
+    # selected profile flip back on its own with no action of theirs
+    # to explain it. Resume whatever was already in the file instead,
+    # same as the GUI itself would show if the daemon hadn't needed to
+    # restart at all -- only fall back to M1 if the file doesn't exist
+    # yet or doesn't hold a real profile name.
+    try:
+        active_profile = pf.read_text().strip()
+    except OSError:  # FileNotFoundError is a subclass of this
+        active_profile = ""
+    if active_profile not in M_LEDS:
+        active_profile = "M1"
     write_active_profile(active_profile)
     light_profile_led(active_profile)
     last_mtime = pf.stat().st_mtime
