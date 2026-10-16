@@ -94,6 +94,21 @@ int main(void) {
             log_button(key_name(ev.code));
         }
     }
+    /* Real bug found via self-audit: this loop only ever ends because
+       fread() failed (EOF or a read error) -- there's no signal
+       handler or "shutdown requested" flag anywhere in this file, so
+       a `systemctl stop` just kills the process outright rather than
+       exiting the loop normally. That means every natural loop-exit
+       here really is a device failure (most plausibly the keyboard
+       being unplugged, or a suspend/resume cycle dropping the USB
+       connection) -- but this used to `return 0` regardless, and the
+       systemd unit's Restart=on-failure only restarts on a NON-ZERO
+       exit. A clean exit(0) after losing the device meant L1-L5 would
+       stop responding permanently until someone noticed and manually
+       restarted the service, even after the keyboard was replugged
+       and /dev/g510-keys existed again. Exiting non-zero here lets
+       systemd's existing Restart=on-failure/RestartSec=3 actually do
+       its job and keep retrying the open. */
     fclose(f);
-    return 0;
+    return 1;
 }
