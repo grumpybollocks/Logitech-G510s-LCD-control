@@ -751,11 +751,12 @@ static void update_media_info(void) {
        bridge) stayed correctly bounded to the real per-track duration
        the whole time, confirmed over the same window.
 
-       Query every player once. Prefer a player that is actually Playing
-       over registered-but-paused players, which otherwise could win
-       simply because playerctl listed them first. When duplicate browser
-       players are both playing, keep plasma-browser-integration's richer
-       title/artist and the raw browser player's accurate timing. */
+       Query every player once and prefer active players over
+       registered-but-paused players. When duplicate browser players
+       are both active, keep plasma-browser-integration's richer
+       title/artist and the raw browser player's accurate timing. VLC
+       can omit title entirely; in that case use the media URL's
+       filename before falling back to PulseAudio's generic stream name. */
     FILE *p = popen("playerctl -a metadata --format "
                      "'{{ playerName }}\x1f{{ title }}\x1f{{ artist }}\x1f{{ position }}\x1f{{ mpris:length }}\x1f{{ status }}\x1f{{ xesam:url }}' 2>/dev/null", "r");
     if (!p) return;
