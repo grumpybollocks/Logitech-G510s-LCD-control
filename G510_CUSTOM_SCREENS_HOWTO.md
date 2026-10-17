@@ -5,7 +5,7 @@ Im Tab **LCD Screens** kannst du eigene Übersichten für die Tasten L2–L5 ers
 ## Grundlagen
 
 1. **Bildschirm auswählen** – Klicke oben auf L1, L2, L3, L4 oder L5.
-   - **L1 ist eine Vorschau und nicht bearbeitbar.** Dort wird die eingebaute Uhr angezeigt. Mit der physischen L1-Taste an der Tastatur wechselst du wie gewohnt zwischen Uhr und CPU-/RAM-/VRAM-/Temperaturanzeige. Der Tab zeigt jeweils den aktuellen Inhalt, damit du nicht zur Tastatur greifen musst. Hinzufügen und Importieren sind hier deaktiviert; der Mauszeiger erklärt per Tooltip den Grund.
+   - **L1 ist eine Vorschau und nicht bearbeitbar.** Die Statistikseite von L1 verwendet dieselbe Belegung wie L2; Änderungen an L2 erscheinen daher auch auf dieser L1-Seite. Mit der physischen L1-Taste wechselst du zwischen dieser Anzeige und der eingebauten Uhr. Hinzufügen und Importieren sind hier deaktiviert; der Mauszeiger erklärt per Tooltip den Grund.
    - **L2–L5 kannst du frei gestalten.** Ein leerer Bildschirm bleibt einfach leer – du musst vorher nichts löschen.
 
 2. **Sensor hinzufügen** – Wähle im ersten Auswahlfeld einen Sensor (zum Beispiel CPU-Auslastung, RAM oder GPU-Temperatur). Wähle **Number** für eine reine Zahlenanzeige oder **Bar** für einen Balken mit Zahlenwert. Für Balken kannst du außerdem eine waagerechte oder senkrechte Ausrichtung einstellen. Klicke anschließend auf **Add**. Senkrechte Balken zeigen ein kurzes Label über dem Balken; die CPU-Kerne verwenden standardmäßig kompakte Labels wie C1 bis C8.

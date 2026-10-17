@@ -647,6 +647,7 @@ static void update_net_speed(void) {
 static char g_media_title[64] = "";
 static char g_media_artist[48] = "";
 static char g_media_elapsed[32] = ""; /* wide enough for even an absurdly long podcast (e.g. 9999:59/9999:59) -- -Wformat-truncation caught the original 16-byte buffer as theoretically too small, real warning, not ignored */
+static int g_media_playing = 0;
 
 /* Real bug, direct report: "its also picking up a (56) which is just
    a bunch of notifications, needs to be ignored. it used to look nice
@@ -722,6 +723,7 @@ static void update_media_info(void) {
     g_media_title[0] = 0;
     g_media_artist[0] = 0;
     g_media_elapsed[0] = 0;
+    g_media_playing = 0;
     /* Real bug found and fixed (title/artist source): querying with no
        -p flag lets playerctl pick "the first available player" by its
        own priority order, which on this real KDE desktop picked
@@ -786,6 +788,7 @@ static void update_media_info(void) {
 
         int is_plasma = (strcmp(player, "plasma-browser-integration") == 0);
         int is_playing = (strcmp(status, "Playing") == 0);
+        if (is_playing) g_media_playing = 1;
 
         if (is_playing > title_playing ||
             (is_playing == title_playing && is_plasma && !title_is_plasma)) {
@@ -814,7 +817,7 @@ static void update_media_info(void) {
 
     /* Fallback fuer Player ohne MPRIS (z. B. radiotray-ng): Der Stream-Titel
        steht in PulseAudio als media.name ("Interpret - Titel"). */
-    if (!title_buf[0]) {
+    if (!g_media_playing || !title_buf[0]) {
         FILE *pa = popen("LC_ALL=C pactl list sink-inputs 2>/dev/null", "r");
         if (pa) {
             char pl[512], name[256] = "";
@@ -838,6 +841,7 @@ static void update_media_info(void) {
             pclose(pa);
             if (name[0] && !corked && strcmp(name, "Playback Stream") != 0
                     && strcmp(name, "playback") != 0) {
+                g_media_playing = 1;
                 char *sep = strstr(name, " - ");
                 if (sep) {
                     *sep = 0;
@@ -900,17 +904,7 @@ static void format_kbps(double kbps, char *out, size_t outlen) {
 
 /* --- layout --- */
 
-#define ROW_CPU  3
-#define ROW_RAM  33
-#define ROW_VRAM 23
-#define ROW_TEMP 13
 #define BAR_H    4
-
-#define LABEL_X  6
-#define PCT_X    35
-#define BAR_X1   62
-#define BAR_X2   122
-#define AMT_X    125
 
 /* Slim, borderless bar: a 1px baseline marks full scale, a filled block
    on top shows the current value. No boxed outline (elegant, not "fat"). */
@@ -944,8 +938,6 @@ static void draw_vertical_slim_bar(g15canvas *c, int x, int y, int w, int h, int
    for this exact tiny resolution, so it stays legible where converted
    TTFs keep garbling at 6-8px. */
 static g15font *label_font = NULL;
-
-#define LABEL_Y_OFFSET 3 /* Eurostile's metrics sit higher than the number font's */
 
 /* PROJECT_DIR is passed at compile time by install.sh/rebuild.sh
    (-DPROJECT_DIR='"'$DIR'"') so this file doesn't hardcode a username
@@ -1106,18 +1098,6 @@ static const char *disk_secondary_path(void) {
     return path;
 }
 
-/* The built-in statistics screen retains its custom G15 label font.
-   Editable dashboard labels use the selected built-in text size instead,
-   matching each element's value and keeping its layout measurable. */
-
-static void draw_label(g15canvas *c, int x, int y, const char *label) {
-    if (label_font) {
-        g15r_G15FontRenderString(c, label_font, (char*)label, 0, x, y + LABEL_Y_OFFSET, G15_COLOR_BLACK, 0);
-    } else {
-        g15r_renderString(c, (unsigned char*)label, 0, G15_TEXT_SMALL, x, y);
-    }
-}
-
 /* Real bugs found by direct user testing: (1) long value text (a real
    song title) ran straight off the visible screen edge with no
    fallback -- "theres no fallback plan for when the text is too long.
@@ -1147,6 +1127,67 @@ static int measure_builtin_text_width(const char *s, int font_size) {
         for (int x = 0; x < G15_LCD_WIDTH; x++)
             if (g15r_getPixel(&scratch, x, y) && x > max_x) max_x = x;
     return max_x + 1; /* -1 (nothing lit) + 1 = 0, correct for an all-blank string */
+}
+
+static int degree_symbol_radius(int font_size) {
+    (void)font_size;
+    return 1;
+}
+
+static int split_temperature_value(const char *text, char *number, size_t number_size) {
+    size_t length = strlen(text);
+    if (length < 2 || text[length - 1] != 'C' || number_size == 0) return 0;
+    size_t number_length = length - 1;
+    if (number_length >= number_size) return 0;
+    memcpy(number, text, number_length);
+    number[number_length] = '\0';
+    char *end = NULL;
+    strtol(number, &end, 10);
+    return end && *end == '\0';
+}
+
+static int measure_temperature_value_width(const char *text, int font_size) {
+    char number[32];
+    if (!split_temperature_value(text, number, sizeof(number)))
+        return measure_builtin_text_width(text, font_size);
+    int diameter = degree_symbol_radius(font_size) * 2 + 1;
+    return measure_builtin_text_width(number, font_size) + 1 + diameter + 1
+           + measure_builtin_text_width("C", font_size);
+}
+
+static void truncate_builtin_text(char *text, int font_size, int max_width);
+
+static void draw_sensor_value(g15canvas *canvas, const char *text, int x, int y,
+                              int font_size, int is_temp) {
+    char number[32];
+    if (!is_temp || !split_temperature_value(text, number, sizeof(number))) {
+        g15r_renderString(canvas, (unsigned char*)text, 0, font_size, x, y);
+        return;
+    }
+    int number_width = measure_builtin_text_width(number, font_size);
+    int radius = degree_symbol_radius(font_size);
+    int diameter = radius * 2 + 1;
+    g15r_renderString(canvas, (unsigned char*)number, 0, font_size, x, y);
+    g15r_drawCircle(canvas, x + number_width + 1 + radius, y + radius,
+                    radius, 0, G15_COLOR_BLACK);
+    g15r_renderString(canvas, (unsigned char*)"C", 0, font_size,
+                      x + number_width + diameter + 2, y);
+}
+
+static void truncate_sensor_value(char *text, int font_size, int max_width,
+                                  int is_temp) {
+    int width = is_temp ? measure_temperature_value_width(text, font_size)
+                        : measure_builtin_text_width(text, font_size);
+    if (width <= max_width) return;
+    if (is_temp && measure_builtin_text_width(text, font_size) <= max_width) {
+        size_t length = strlen(text);
+        if (length + 1 < 32) {
+            text[length] = ' ';
+            text[length + 1] = '\0';
+            return;
+        }
+    }
+    truncate_builtin_text(text, font_size, max_width);
 }
 
 static void draw_builtin_label(g15canvas *canvas, const char *text, int x, int y,
@@ -1224,16 +1265,6 @@ static void truncate_builtin_text(char *s, int font_size, int max_w) {
     s[0] = 0; /* not even one character + '.' fits -- genuinely no room, show nothing rather than garbage */
 }
 
-static void draw_row(g15canvas *c, int y, const char *label, int pct,
-                      const char *pct_str, const char *amount, int pct_y_nudge) {
-    draw_label(c, LABEL_X, y, label);
-    g15r_renderString(c, (unsigned char*)pct_str, 0, G15_TEXT_SMALL, PCT_X, y + pct_y_nudge);
-    draw_slim_bar(c, BAR_X1, BAR_X2, y, BAR_H, pct);
-    if (amount) {
-        g15r_renderString(c, (unsigned char*)amount, 0, G15_TEXT_SMALL, AMT_X, y);
-    }
-}
-
 static const char *screen_state_path(void) {
     static char path[256];
     const char *runtime = getenv("XDG_RUNTIME_DIR");
@@ -1250,52 +1281,56 @@ static int read_screen(void) {
     return s;
 }
 
-/* Screen 0: the original built-in stats screen. Pulled into its own
-   function (was inline in main()) so --preview can render it through the
-   exact same code path as the live loop. */
+#define MEDIA_SCREEN 3
+
+static int write_screen(int screen) {
+    FILE *f = fopen(screen_state_path(), "w");
+    if (!f) {
+        perror("g510-lcd-stats: cannot save active screen");
+        return 0;
+    }
+    int ok = fprintf(f, "%d", screen) >= 0;
+    if (fclose(f) != 0) ok = 0;
+    if (!ok) perror("g510-lcd-stats: cannot save active screen");
+    return ok;
+}
+
+static void update_media_screen_selection(void) {
+    static int media_screen_active = 0;
+    static int return_screen = 0;
+    static int last_auto_screen = MEDIA_SCREEN;
+    int screen = read_screen();
+
+    if (g_media_playing) {
+        if (!media_screen_active) {
+            return_screen = screen;
+            media_screen_active = 1;
+        } else if (screen != last_auto_screen) {
+            return_screen = screen;
+        }
+
+        if (screen != MEDIA_SCREEN && write_screen(MEDIA_SCREEN))
+            last_auto_screen = MEDIA_SCREEN;
+        else if (screen == MEDIA_SCREEN)
+            last_auto_screen = MEDIA_SCREEN;
+    } else if (media_screen_active) {
+        if (screen != last_auto_screen) {
+            return_screen = screen;
+            media_screen_active = 0;
+        } else if (screen == return_screen || write_screen(return_screen)) {
+            media_screen_active = 0;
+        }
+    }
+}
+
+/* L1's default stats slot mirrors L2's configured layout. L1's button
+   still switches to the separate built-in clock screen. */
 static int max_temp_seen = 0; /* highest temp observed since this program started */
 
+static void draw_custom_screen(g15canvas *c, int screen_num);
+
 static void draw_stats_screen(g15canvas *canvas) {
-    double cpu_pct = get_cpu_percent();
-    char cpu_str[16], cpu_ghz_str[16];
-    snprintf(cpu_str, sizeof(cpu_str), "%3d%%", (int)(cpu_pct + 0.5));
-    snprintf(cpu_ghz_str, sizeof(cpu_ghz_str), "%.1fGHz", get_cpu_ghz());
-    draw_row(canvas, ROW_CPU, "CPU", (int)cpu_pct, cpu_str, cpu_ghz_str, 0);
-
-    long ram_used_kb, ram_total_kb;
-    get_ram_kb(&ram_used_kb, &ram_total_kb);
-    int ram_pct = ram_total_kb > 0 ? (int)(100.0 * ram_used_kb / ram_total_kb) : 0;
-    char ram_pct_str[16], ram_amt_str[16];
-    snprintf(ram_pct_str, sizeof(ram_pct_str), "%3d%%", ram_pct);
-    snprintf(ram_amt_str, sizeof(ram_amt_str), "%.1fG", ram_used_kb / (1024.0 * 1024.0));
-    draw_row(canvas, ROW_RAM, "RAM", ram_pct, ram_pct_str, ram_amt_str, 0);
-
-    unsigned long long vram_used, vram_total;
-    get_vram_bytes(&vram_used, &vram_total);
-    int vram_pct = vram_total > 0 ? (int)(100.0 * vram_used / vram_total) : 0;
-    char vram_pct_str[16], vram_amt_str[16];
-    if (vram_total > 0) {
-        snprintf(vram_pct_str, sizeof(vram_pct_str), "%3d%%", vram_pct);
-        format_gb(vram_used, vram_amt_str, sizeof(vram_amt_str));
-    } else {
-        snprintf(vram_pct_str, sizeof(vram_pct_str), "N/A");
-        snprintf(vram_amt_str, sizeof(vram_amt_str), "N/A");
-    }
-    draw_row(canvas, ROW_VRAM, "VRAM", vram_pct, vram_pct_str, vram_amt_str, 0);
-
-    int temp_c = get_cpu_temp_c();
-    char temp_str[16], temp_max_str[16];
-    int temp_pct = 0;
-    if (temp_c >= 0) {
-        if (temp_c > max_temp_seen) max_temp_seen = temp_c;
-        snprintf(temp_str, sizeof(temp_str), "%d" "\xB0" "C", temp_c);
-        snprintf(temp_max_str, sizeof(temp_max_str), "MAX %d" "\xB0" "C", max_temp_seen);
-        temp_pct = temp_c * 100 / 90;
-    } else {
-        snprintf(temp_str, sizeof(temp_str), "N/A");
-        snprintf(temp_max_str, sizeof(temp_max_str), "MAX N/A");
-    }
-    draw_row(canvas, ROW_TEMP, "TEMP", temp_pct, temp_str, temp_max_str, 1);
+    draw_custom_screen(canvas, 2);
 }
 
 /* Screen 1: a simple large clock. New screens go here -- L1 cycles
@@ -1602,7 +1637,7 @@ static void get_sensor_value(const char *key, const char *format,
         int t = get_cpu_temp_c();
         if (t >= 0) {
             *pct_for_bar = t * 100.0 / 90.0;
-            snprintf(disp, displen, "%d\xB0" "C", t);
+            snprintf(disp, displen, "%dC", t);
         } else snprintf(disp, displen, "N/A");
     } else if (strcmp(key, "RAM_PCT") == 0) {
         long u, t; get_ram_kb(&u, &t);
@@ -1624,7 +1659,9 @@ static void get_sensor_value(const char *key, const char *format,
         if (t > 0) format_gb(u, disp, displen);
         else snprintf(disp, displen, "N/A");
     } else if (strcmp(key, "MAXTEMP") == 0) {
-        if (max_temp_seen > 0) snprintf(disp, displen, "%d\xB0" "C", max_temp_seen);
+        int current_temp = get_cpu_temp_c();
+        if (current_temp > max_temp_seen) max_temp_seen = current_temp;
+        if (max_temp_seen > 0) snprintf(disp, displen, "%dC", max_temp_seen);
         else snprintf(disp, displen, "N/A");
     } else if (strcmp(key, "GPU_PCT") == 0) {
         double v = get_gpu_percent();
@@ -1634,19 +1671,19 @@ static void get_sensor_value(const char *key, const char *format,
         int t = get_gpu_temp_c(0);
         if (t >= 0) {
             *pct_for_bar = t * 100.0 / 90.0;
-            snprintf(disp, displen, "%d\xB0" "C", t);
+            snprintf(disp, displen, "%dC", t);
         } else snprintf(disp, displen, "N/A");
     } else if (strcmp(key, "GPU_HOTSPOT_TEMP") == 0) {
         int t = get_gpu_temp_c(1);
         if (t >= 0) {
             *pct_for_bar = t * 100.0 / 90.0;
-            snprintf(disp, displen, "%d\xB0" "C", t);
+            snprintf(disp, displen, "%dC", t);
         } else snprintf(disp, displen, "N/A");
     } else if (strcmp(key, "GPU_VRAM_TEMP") == 0) {
         int t = get_gpu_temp_c(2);
         if (t >= 0) {
             *pct_for_bar = t * 100.0 / 90.0;
-            snprintf(disp, displen, "%d\xB0" "C", t);
+            snprintf(disp, displen, "%dC", t);
         } else snprintf(disp, displen, "N/A");
     } else if (strcmp(key, "SWAP_PCT") == 0) {
         double v = get_swap_percent();
@@ -1690,7 +1727,7 @@ static void get_sensor_value(const char *key, const char *format,
         int t = n > 0 ? get_motherboard_temp_c(n - 1) : -1;
         if (t >= 0) {
             *pct_for_bar = t * 100.0 / 90.0;
-            snprintf(disp, displen, "%d\xB0" "C", t);
+            snprintf(disp, displen, "%dC", t);
         } else snprintf(disp, displen, "N/A");
     }
 }
@@ -2027,8 +2064,8 @@ static void draw_element(g15canvas *c, element_t *el) {
        measure_builtin_text_width()) before either draw path below
        ever renders it, so nothing this function draws can overflow. */
     int avail = G15_LCD_WIDTH - TEXT_EDGE_MARGIN - value_x;
-    truncate_builtin_text(disp, el->font_size, avail);
-    int value_w = measure_builtin_text_width(disp, el->font_size);
+    truncate_sensor_value(disp, el->font_size, avail, def->is_temp);
+    int value_w = measure_temperature_value_width(disp, el->font_size);
 
     if (def->auto_center) {
         /* Truncate against the FULL centered budget (not the
@@ -2040,9 +2077,10 @@ static void draw_element(g15canvas *c, element_t *el) {
            time. el->x (dragging up/down) still moves the row's Y --
            only X is forced to center. */
         int label_block = (label_w && !vertical_bar) ? label_w + gap : 0;
-        truncate_builtin_text(disp, el->font_size,
-                              G15_LCD_WIDTH - 2 * TEXT_EDGE_MARGIN - label_block);
-        value_w = measure_builtin_text_width(disp, el->font_size);
+        truncate_sensor_value(disp, el->font_size,
+                              G15_LCD_WIDTH - 2 * TEXT_EDGE_MARGIN - label_block,
+                              def->is_temp);
+        value_w = measure_temperature_value_width(disp, el->font_size);
         int block_x = (G15_LCD_WIDTH - (label_block + value_w)) / 2;
         if (block_x < TEXT_EDGE_MARGIN) block_x = TEXT_EDGE_MARGIN;
         value_x = block_x + label_block;
@@ -2082,10 +2120,10 @@ static void draw_element(g15canvas *c, element_t *el) {
            at value_x -- truncate/measure again against the real
            remaining space from THERE, not the pre-bar budget above. */
         int bar_avail = G15_LCD_WIDTH - TEXT_EDGE_MARGIN - (bar_x2 + 4);
-        truncate_builtin_text(disp, el->font_size, bar_avail);
-        value_w = measure_builtin_text_width(disp, el->font_size);
+        truncate_sensor_value(disp, el->font_size, bar_avail, def->is_temp);
+        value_w = measure_temperature_value_width(disp, el->font_size);
         draw_slim_bar(c, bar_x1, bar_x2, el->y, BAR_H, (int)pct_for_bar);
-        g15r_renderString(c, (unsigned char*)disp, 0, el->font_size, bar_x2 + 4, el->y);
+        draw_sensor_value(c, disp, bar_x2 + 4, el->y, el->font_size, def->is_temp);
         if (b) {
             b->is_bar = 1;
             b->is_vertical = 0;
@@ -2094,7 +2132,7 @@ static void draw_element(g15canvas *c, element_t *el) {
             b->value_x2 = bar_x2 + 4 + value_w;
         }
     } else {
-        g15r_renderString(c, (unsigned char*)disp, 0, el->font_size, value_x, el->y);
+        draw_sensor_value(c, disp, value_x, el->y, el->font_size, def->is_temp);
         if (b) b->value_x2 = value_x + value_w;
     }
 }
@@ -2369,6 +2407,7 @@ int main(int argc, char **argv) {
             update_net_speed();
             update_nvidia_stats();
             update_media_info();
+            update_media_screen_selection();
             last_slow_update = now_t;
         }
         update_visualizer();

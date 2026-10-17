@@ -50,7 +50,8 @@ Alle drei Dienste sollten `active (running)` anzeigen. Falls das LCD nicht sofor
 Mediendaten werden über MPRIS von Playern gelesen, die diese Schnittstelle
 über D-Bus bereitstellen. Bei VLC kann der Dateiname als Titel dienen, wenn
 der Player selbst keinen Titel meldet. Bei mehreren Playern wird der aktiv
-spielende bevorzugt.
+spielende bevorzugt. Während der Wiedergabe schaltet das LCD automatisch zu
+L3 und kehrt danach zum zuvor ausgewählten Bildschirm zurück.
 
 ![G510s-Steuerungsanwendung – v1](docs/screenshots/g510s-control-v1.png)
 
