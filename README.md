@@ -43,15 +43,11 @@ Alle drei Dienste sollten `active (running)` anzeigen. Falls das LCD nicht sofor
 - Live-Anzeige von CPU, RAM, VRAM und Temperatur auf dem eingebauten LCD
 - Vollständige RGB-Steuerung der Tastaturbeleuchtung
 - G-Tasten-Makros mit den Profilen M1, M2 und M3
-- Editor für eigene Bildschirme: Sensoren, Bilder und Text auf L2–L5 platzieren; L1 zeigt zusätzlich eine analoge Uhr
+- Editor für eigene Bildschirme: Sensoren, Bilder und Text auf L2–L5 platzieren; die Statistikseite von L1 übernimmt die L2-Belegung, die L1-Taste wechselt zusätzlich zur analogen Uhr
 - Kleiner Winamp auf der Tastatur: animierte Equalizer-Balken sowie Titel, Interpret und Laufzeit des aktuell wiedergegebenen Mediums
+- Fortschrittsbalken für Medien mit einer bekannten Laufzeit
+- Während der Wiedergabe wechselt das LCD automatisch zu L3 und danach zurück zum zuvor ausgewählten Bildschirm
 - Läuft ohne Root-Rechte unter dem normalen Benutzerkonto, startet bei der Anmeldung und übersteht Neustarts
-
-Mediendaten werden über MPRIS von Playern gelesen, die diese Schnittstelle
-über D-Bus bereitstellen. Bei VLC kann der Dateiname als Titel dienen, wenn
-der Player selbst keinen Titel meldet. Bei mehreren Playern wird der aktiv
-spielende bevorzugt. Während der Wiedergabe schaltet das LCD automatisch zu
-L3 und kehrt danach zum zuvor ausgewählten Bildschirm zurück.
 
 ![G510s-Steuerungsanwendung – v1](docs/screenshots/g510s-control-v1.png)
 
@@ -89,7 +85,7 @@ Ein paar Dinge aus der Entwicklung, die das Projekt persönlicher machen:
 
 - Auf Wunsch kann die Anwendung freien Speicherplatz auf einem zweiten Laufwerk als Sensor anzeigen. Die Funktion ist optional und zeigt auf Systemen ohne ein solches Laufwerk korrekt „N/A“ an.
 - Das Projekt begann neben einer Schwesteranwendung für die Logitech G910 (siehe „Suchst du ein anderes Projekt?“). Diese gemeinsame Vorgeschichte ist noch im Commit-Verlauf dieses Repositorys sichtbar, obwohl die G910-Dateien inzwischen verschoben wurden.
-- „wtf are the blue squares for?“ war echtes, wörtliches Feedback, das eine konkrete Änderung an der Oberfläche ausgelöst hat: Ziehpunkte zum Ändern der Größe erscheinen jetzt erst, wenn sich der Mauszeiger in ihrer Nähe befindet. Ein gutes Beispiel dafür, warum echte Nutzung besser ist als bloßes Raten.
+- „wtf are the blue squares for?“ („Wofür sind die blauen Quadrate?“) war echtes, wörtliches Feedback, das eine konkrete Änderung an der Oberfläche ausgelöst hat: Ziehpunkte zum Ändern der Größe erscheinen jetzt erst, wenn sich der Mauszeiger in ihrer Nähe befindet. Ein gutes Beispiel dafür, warum echte Nutzung besser ist als bloßes Raten.
 
 ---
 

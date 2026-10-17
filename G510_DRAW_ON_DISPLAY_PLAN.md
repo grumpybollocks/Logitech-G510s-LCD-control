@@ -1,6 +1,6 @@
 # Phase „Auf dem Display zeichnen“ – umgesetzt am 14.09.2026
 
-**Aktualisierung: implementiert.** In der ursprünglichen Fassung dieses Dokuments sollte mit der Arbeit gewartet werden, bis der Benutzer anwesend ist. Zum Zeitpunkt der Umsetzung hatte der Benutzer jedoch ausdrücklich darum gebeten, die Arbeit abzuschließen. Alle übrigen Custom-Screens-Punkte waren fertiggestellt und für mehrere Funktionen derselben Sitzung war bereits volle Selbstständigkeit („you have autonomy im away AFK“) gewährt worden. Die Umsetzung folgte genau dem in diesem Dokument beschriebenen Ablauf: planen, mit `--preview` prüfen und anschließend verifizieren. Die frühere Warteanweisung wurde damit für diesen letzten Punkt aufgehoben, nicht ignoriert.
+**Aktualisierung: implementiert.** In der ursprünglichen Fassung dieses Dokuments sollte mit der Arbeit gewartet werden, bis der Benutzer anwesend ist. Zum Zeitpunkt der Umsetzung hatte der Benutzer jedoch ausdrücklich darum gebeten, die Arbeit abzuschließen. Alle übrigen Custom-Screens-Punkte waren fertiggestellt; für mehrere Funktionen derselben Sitzung hatte der Benutzer außerdem ausdrücklich selbstständiges Arbeiten während seiner Abwesenheit erlaubt („du kannst selbstständig weitermachen, während ich nicht da bin“). Die Umsetzung folgte genau dem in diesem Dokument beschriebenen Ablauf: planen, mit `--preview` prüfen und anschließend verifizieren. Die frühere Warteanweisung wurde damit für diesen letzten Punkt aufgehoben, nicht ignoriert.
 
 Der Inhalt unterhalb dieses Hinweises besteht aus der ursprünglichen Planung (unverändert im Sinn der Dokumentation) und dem Bericht zur Umsetzung und Prüfung.
 
@@ -42,7 +42,7 @@ Zusätzlich wurde das tatsächliche GUI-Fenster mit einem echten importierten Bi
 
 Zu Beginn des Projekts, bevor das Sensordashboard Custom Screens v1.1 existierte, wurde die Idee untersucht, beliebige Inhalte auf dem LCD zu zeichnen – Text und PNG-Bilder frei auf eigenen Bildschirmen platzieren. Die Prioritäten änderten sich dabei zweimal:
 
-1. Zunächst stimmte der Benutzer einem einfachen Ansatz zu, änderte dann aber ausdrücklich die Richtung: *„hold up. roll back. i dont want a script on steroids“*. Eine auf yad/Bash basierende Umsetzung sollte nicht zu einem überladenen Skript anwachsen; stattdessen wurde eine richtige PyQt5-Anwendung entwickelt, aus der die heutige Architektur entstand.
+1. Zunächst stimmte der Benutzer einem einfachen Ansatz zu, änderte dann aber ausdrücklich die Richtung: *„hold up. roll back. i dont want a script on steroids“* („Moment, zurück damit. Ich möchte kein völlig überladenes Skript.“). Eine auf yad/Bash basierende Umsetzung sollte nicht zu einem überladenen Skript anwachsen; stattdessen wurde eine richtige PyQt5-Anwendung entwickelt, aus der die heutige Architektur entstand.
 2. Später wurde die Priorität erneut geändert: *„png function isnt that important as much as id like to do my own stats“*. Phase 2 wurde damit das Sensordashboard (Custom Screens v1.1), das inzwischen umgesetzt ist. PNG-/Bildplatzierung wurde zurückgestellt, aber nicht aufgegeben.
 
 Hinweise darauf, dass die Funktion wieder aufgenommen werden sollte, gab es bereits: `.gitignore` enthielt schon `custom_screen_images/*.bin`, obwohl das Verzeichnis noch nicht existierte. Außerdem waren `src/png-to-lcd.py` (PNG zu 1-Bit-XBM, mit Dithering von Pillow) und `g15r_drawXBM()` aus `libg15render` bereits vorhanden, aber ungenutzt.
@@ -69,7 +69,7 @@ Die Phase „auf dem Display zeichnen“ bedeutet somit: Bilder auf einem Bildsc
 
 ### Empfohlener Umfang – entsprechend dem geäußerten Wunsch
 
-Der Benutzer hatte bei der ersten Diskussion gesagt: *„i don't want drag and drop if i could just click 'import png' button, whatever makes you code the least... i want something LIGHT, less is more kinda thinking.“* Dieser Wunsch nach einer einfachen Lösung sollte weiterhin gelten:
+Der Benutzer hatte bei der ersten Diskussion gesagt: *„i don't want drag and drop if i could just click 'import png' button, whatever makes you code the least... i want something LIGHT, less is more kinda thinking“* („Ich möchte kein Ziehen und Ablegen, wenn ich einfach auf ‚PNG importieren‘ klicken kann – was am wenigsten Programmieraufwand macht. Es soll eine einfache, schlanke Lösung sein: Weniger ist mehr.“). Dieser Wunsch nach einer einfachen Lösung sollte weiterhin gelten:
 
 - Eine Schaltfläche **Import Image** im vorhandenen Custom-Screens-Tab, neben dem Formular zum Hinzufügen von Sensoren – kein neuer Tab und kein neuer Anwendungsmodus. Bilder und Sensorelemente können auf demselben Bildschirm kombiniert werden (zum Beispiel kleines Logo und CPU-Balken), da das bestehende System bereits mehrere Elemente je Bildschirm verwaltet.
 - Kein manueller Zuschneide- oder Anpassungsschritt. `png-to-lcd.py` skaliert das Bild bereits automatisch und wandelt es um. Wenn ein bestimmtes Bild nach dem Dithering schlecht aussieht, kann das später gezielt verbessert werden; dafür ist jetzt kein Bildeditor erforderlich.

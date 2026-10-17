@@ -21,7 +21,7 @@ Im Tab **LCD Screens** kannst du eigene Übersichten für die Tasten L2–L5 ers
 7. **Zahlen oder Text skalieren** – Diese Elemente bestehen aus Text; die kleinen eingebauten Display-Schriften lassen sich nicht stufenlos vergrößern. Deshalb gibt es dafür keinen Ziehpunkt. Wähle vor dem Hinzufügen im Auswahlfeld **Text Size** eine Größe (Small/Medium/Large/Huge). Bei bereits vorhandenen Elementen kannst du über die Schaltfläche neben dem jeweiligen Eintrag rechts durch die Größen wechseln. Sensor-Labels und ihre Werte verwenden dieselbe Größe.
 
 8. **Element entfernen** – Klicke rechts in der Liste neben dem Element auf **✕**.
-9. **Anzeigenamen ändern** – Bearbeite in **Elements on this screen** das Textfeld neben einem Sensor- oder Textelement und drücke Enter. Der Name wird mit dem Bildschirm gespeichert und erscheint in der Vorschau und auf der Tastatur. Temperatursensoren haben kompakte Standardnamen wie **CPU** und **GPU** (z. B. `CPU 32°C`, `GPU 45°C`); sie lassen sich einzeln ändern.
+9. **Anzeigenamen ändern** – Bearbeite in **Elements on this screen** (Elemente auf diesem Bildschirm) das Textfeld neben einem Sensor- oder Textelement und drücke Enter. Der Name wird mit dem Bildschirm gespeichert und erscheint in der Vorschau und auf der Tastatur. Temperatursensoren haben kompakte Standardnamen wie **CPU** und **GPU** (z. B. `CPU 32°C`, `GPU 45°C`); das Gradzeichen wird als kleiner Kreis gezeichnet. Die Namen lassen sich einzeln ändern.
 
 10. **Datums- und Zeitformat wählen** – Bei **Date** und **Time** wählst du das Format über die kompakte Auswahl in der Zeile. Sie ersetzt das Label-Feld, da Datum und Uhrzeit ohne Label angezeigt werden. Es werden nur unterstützte Formate angeboten; die Wahl wird pro Bildschirm gespeichert und die Vorschau aktualisiert sich sofort.
 
@@ -40,7 +40,7 @@ Das war's. Eine **Speichern**-Schaltfläche gibt es nicht: Jede Änderung (Versc
 
 ## Auf der echten Tastatur anzeigen
 
-Wenn deine eigene Anzeige in der Anwendung passt, drücke die zugehörige L-Taste an der Tastatur (L2, L3, L4 oder L5). Falls die Tastatur eine Änderung nicht sofort anzeigt, muss möglicherweise der LCD-Dienst neu gestartet werden. Wenn du nicht weißt, wie das geht, frage nach.
+Wenn deine eigene Anzeige in der Anwendung passt, drücke die zugehörige L-Taste an der Tastatur (L2, L3, L4 oder L5). Die L2-Belegung erscheint zusätzlich auf der Statistikseite von L1; mit der L1-Taste wechselst du dort zwischen dieser Seite und der Uhr. Falls die Tastatur eine Änderung nicht sofort anzeigt, muss möglicherweise der LCD-Dienst neu gestartet werden. Wenn du nicht weißt, wie das geht, frage nach.
 
 ## Dashboard-Vorlagen
 
@@ -49,7 +49,7 @@ Wähle eine Vorlage und klicke auf **Apply layout preset...**, um den ausgewähl
 - **CPU / GPU performance** – acht Balken für einzelne logische CPU-Kerne, GPU-Temperatur und -Auslastung, RAM und Netzwerk-Up-/Downloadraten.
 - **Temperature overview** – CPU-Temperatur, GPU-Edge-/Hotspot-/VRAM-Temperatur und die maximale CPU-Temperatur seit Dienststart.
 - **Network, disks & clock** – Down-/Upload, Festplattenbelegung als Balken, Uhrzeit und Datum.
-- **Media player** – Titel, Interpret und Audio-Visualizer.
+- **Media player (Medienplayer)** – Titel, Interpret, Laufzeit und Audio-Visualizer. Die Laufzeit im Stil **Bar** zeigt die aktuelle Zeit links und die Gesamtdauer rechts neben dem Fortschrittsbalken; bei Livestreams ohne verlässliche Gesamtdauer gibt es keinen Fortschrittsbalken.
 - **System overview** – CPU-, RAM- und GPU-Balken mit aktueller Uhrzeit und Datum.
 
 Die Höhe der CPU-Balken zeigt die **Auslastung**, nicht die Temperatur. Linux stellt die Temperatur einzelner CPU-Kerne nicht auf jeder Hardware bereit.

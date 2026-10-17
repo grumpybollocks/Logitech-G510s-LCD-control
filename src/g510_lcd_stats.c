@@ -647,6 +647,7 @@ static void update_net_speed(void) {
 static char g_media_title[64] = "";
 static char g_media_artist[48] = "";
 static char g_media_elapsed[32] = ""; /* wide enough for even an absurdly long podcast (e.g. 9999:59/9999:59) -- -Wformat-truncation caught the original 16-byte buffer as theoretically too small, real warning, not ignored */
+static double g_media_progress_pct = -1;
 static int g_media_playing = 0;
 
 /* Real bug, direct report: "its also picking up a (56) which is just
@@ -723,6 +724,7 @@ static void update_media_info(void) {
     g_media_title[0] = 0;
     g_media_artist[0] = 0;
     g_media_elapsed[0] = 0;
+    g_media_progress_pct = -1;
     g_media_playing = 0;
     /* Real bug found and fixed (title/artist source): querying with no
        -p flag lets playerctl pick "the first available player" by its
@@ -891,8 +893,11 @@ static void update_media_info(void) {
         if (len_s <= 0 || len_s > MEDIA_MAX_REASONABLE_LEN_S) {
             snprintf(g_media_elapsed, sizeof(g_media_elapsed), "LIVE");
         } else {
+            if (pos_s < 0) pos_s = 0;
+            if (pos_s > len_s) pos_s = len_s;
             snprintf(g_media_elapsed, sizeof(g_media_elapsed), "%d:%02d/%d:%02d",
                      pos_s / 60, pos_s % 60, len_s / 60, len_s % 60);
+            g_media_progress_pct = 100.0 * pos_s / len_s;
         }
     }
 }
@@ -1528,7 +1533,7 @@ static const sensor_def_t SENSORS[] = {
        self-descriptive, and every pixel matters on this screen. */
     {"MEDIA_TITLE",       "",    0, 0, 1},
     {"MEDIA_ARTIST",      "",    0, 0, 1},
-    {"MEDIA_ELAPSED", "", 0, 0, 1},
+    {"MEDIA_ELAPSED", "", 1, 0, 1},
     {"MB_TEMP1", "MB1", 0, 1, 0},
     {"MB_TEMP2", "MB2", 0, 1, 0},
     {"MB_TEMP3", "MB3", 0, 1, 0},
@@ -1721,6 +1726,7 @@ static void get_sensor_value(const char *key, const char *format,
     } else if (strcmp(key, "MEDIA_ARTIST") == 0) {
         snprintf(disp, displen, "%s", g_media_artist);
     } else if (strcmp(key, "MEDIA_ELAPSED") == 0) {
+        *pct_for_bar = g_media_progress_pct;
         snprintf(disp, displen, "%s", g_media_elapsed);
     } else if (strncmp(key, "MB_TEMP", 7) == 0) {
         int n = atoi(key + 7);
@@ -2067,7 +2073,10 @@ static void draw_element(g15canvas *c, element_t *el) {
     truncate_sensor_value(disp, el->font_size, avail, def->is_temp);
     int value_w = measure_temperature_value_width(disp, el->font_size);
 
-    if (def->auto_center) {
+    int center_value = def->auto_center &&
+                       !(strcmp(el->sensor, "MEDIA_ELAPSED") == 0 &&
+                         strcmp(el->style, "bar") == 0);
+    if (center_value) {
         /* Truncate against the FULL centered budget (not the
            x-anchored one above -- a centered string can use space on
            BOTH sides of the configured x, so re-measure/re-truncate
@@ -2112,6 +2121,48 @@ static void draw_element(g15canvas *c, element_t *el) {
             b->bar_x1 = bar_x1; b->bar_x2 = bar_x1 + bar_width;
             b->bar_y1 = bar_y1; b->bar_y2 = bar_y1 + bar_height;
             b->value_x2 = bar_x1 + bar_width;
+        }
+    } else if (strcmp(el->sensor, "MEDIA_ELAPSED") == 0 &&
+               strcmp(el->style, "bar") == 0 && !vertical_bar &&
+               pct_for_bar >= 0) {
+        char *separator = strchr(disp, '/');
+        if (separator) {
+            *separator = 0;
+            char elapsed[32], duration[32];
+            snprintf(elapsed, sizeof(elapsed), "%s", disp);
+            snprintf(duration, sizeof(duration), "%s", separator + 1);
+
+            int duration_w = measure_builtin_text_width(duration, el->font_size);
+            int max_elapsed_w = G15_LCD_WIDTH - TEXT_EDGE_MARGIN - el->x
+                                - duration_w - 11;
+            truncate_builtin_text(elapsed, el->font_size, max_elapsed_w);
+            int elapsed_w = measure_builtin_text_width(elapsed, el->font_size);
+            int bar_x1 = el->x + elapsed_w + 3;
+            int bar_width = G15_LCD_WIDTH - TEXT_EDGE_MARGIN - bar_x1
+                            - 3 - duration_w;
+            if (bar_width > el->width) bar_width = el->width;
+            if (bar_width < 2) bar_width = 2;
+            int duration_x = bar_x1 + bar_width + 3;
+            int duration_budget = G15_LCD_WIDTH - TEXT_EDGE_MARGIN - duration_x;
+            truncate_builtin_text(duration, el->font_size, duration_budget);
+            value_w = measure_builtin_text_width(duration, el->font_size);
+
+            g15r_renderString(c, (unsigned char*)elapsed, 0, el->font_size,
+                              el->x, el->y);
+            draw_slim_bar(c, bar_x1, bar_x1 + bar_width, el->y, BAR_H,
+                          (int)pct_for_bar);
+            g15r_renderString(c, (unsigned char*)duration, 0, el->font_size,
+                              duration_x, el->y);
+            if (b) {
+                b->is_bar = 1;
+                b->is_vertical = 0;
+                b->bar_x1 = bar_x1; b->bar_x2 = bar_x1 + bar_width;
+                b->bar_y1 = el->y; b->bar_y2 = el->y + BAR_H;
+                b->value_x2 = duration_x + value_w;
+            }
+        } else {
+            draw_sensor_value(c, disp, value_x, el->y, el->font_size, def->is_temp);
+            if (b) b->value_x2 = value_x + value_w;
         }
     } else if (strcmp(el->style, "bar") == 0 && (def->is_percent || def->is_temp) && pct_for_bar >= 0) {
         int bar_x1 = value_x;

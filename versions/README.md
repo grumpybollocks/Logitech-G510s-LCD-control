@@ -13,4 +13,4 @@ Dieser historische Stand ist eingefroren und nicht als Grundlage für die weiter
 
 ## Spätere Versionen
 
-Der nächste Entwicklungsschritt (G-Tasten-Tab mit Aufzeichnung, Wiedergabe über `ydotool` und Profilen M1/M2/M3) ist in der Hauptdatei `README.txt` dokumentiert und wird hier nicht als Snapshot abgelegt, weil er noch aktiv fertiggestellt wird. Die Überprüfung des Profilwechsels über die M-Tasten ist pausiert; siehe den STATUS-Abschnitt am Anfang von `README.txt`.
+Der nächste Entwicklungsschritt (G-Tasten-Tab mit Aufzeichnung, Wiedergabe über `ydotool` und Profilen M1/M2/M3) ist in der technischen Dokumentation [`G510_README.md`](../G510_README.md) beschrieben und wird hier nicht als Snapshot abgelegt, da er in der aktuellen Anwendung weiterentwickelt wird. Die Überprüfung des Profilwechsels über die M-Tasten ist pausiert; siehe den Abschnitt „Aktueller Status“ am Anfang der technischen Dokumentation.

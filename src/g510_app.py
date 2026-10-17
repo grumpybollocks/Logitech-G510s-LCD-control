@@ -993,7 +993,7 @@ SENSOR_DESCRIPTIONS = {
     "DATE": "Current date (same clock as the L1 screen).",
     "MEDIA_TITLE": "Currently playing song title, via any MPRIS-compatible player (Spotify, browser tabs, VLC, etc). Blank if nothing's playing.",
     "MEDIA_ARTIST": "Currently playing artist, same source as Media: Song Title.",
-    "MEDIA_ELAPSED": "Playback position, e.g. \"1:23/3:45\". Blank if nothing's playing.",
+    "MEDIA_ELAPSED": "Playback position and duration. Bar style shows track progress for media with a known duration.",
     "MB_TEMP1": "One of your motherboard's temperature sensors -- your hardware doesn't label what it measures.",
     "MB_TEMP2": "One of your motherboard's temperature sensors -- your hardware doesn't label what it measures.",
     "MB_TEMP3": "One of your motherboard's temperature sensors -- your hardware doesn't label what it measures.",
@@ -1002,16 +1002,16 @@ SENSOR_DESCRIPTIONS = {
     "MB_TEMP6": "One of your motherboard's temperature sensors -- your hardware doesn't label what it measures.",
 }
 
-# Only sensors with an honest 0-100 scale (a true percent, or a
-# temperature via the 0-90C convention already used on the main stats
-# screen) can be shown as a bar -- matches is_percent/is_temp in the C
-# SENSORS[] table exactly. Anything else offered as "Bar" would need a
-# guessed scale, which we don't do.
+# Only sensors with an honest 0-100 scale (a true percent, a temperature
+# via the 0-90C convention, or media playback progress) can be shown as a
+# bar -- matches is_percent/is_temp in the C SENSORS[] table exactly.
+# Other values would need a guessed scale, which we don't do.
 BAR_CAPABLE_SENSORS = {
     "CPU_PCT", *{f"CPU_CORE_{i}" for i in range(8)},
     "CPU_TEMP", "RAM_PCT", "VRAM_PCT", "MAXTEMP",
     "GPU_PCT", "GPU_EDGE_TEMP", "GPU_HOTSPOT_TEMP", "GPU_VRAM_TEMP",
     "SWAP_PCT", "DISK_ROOT_PCT", "DISK_SECONDARY_PCT",
+    "MEDIA_ELAPSED",
     "MB_TEMP1", "MB_TEMP2", "MB_TEMP3", "MB_TEMP4", "MB_TEMP5", "MB_TEMP6",
 }
 
@@ -1838,7 +1838,7 @@ class CustomScreensTab(QWidget):
         panel_layout.addWidget(self.sensor_desc_label)
 
         self.style_combo = QComboBox()
-        self.style_combo.setToolTip("Number: shows the raw value as text. Bar: a filled progress bar (only for sensors with a real 0-100 scale)")
+        self.style_combo.setToolTip("Number: shows the raw value as text. Bar: a filled progress bar (for percentages, temperatures, or media with a known duration)")
         self.style_combo.addItem("Number", "number")
         self.style_combo.addItem("Bar", "bar")
         self.style_combo.currentIndexChanged.connect(self.on_style_changed)
