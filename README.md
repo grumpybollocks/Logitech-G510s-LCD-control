@@ -47,6 +47,11 @@ Alle drei Dienste sollten `active (running)` anzeigen. Falls das LCD nicht sofor
 - Kleiner Winamp auf der Tastatur: animierte Equalizer-Balken sowie Titel, Interpret und Laufzeit des aktuell wiedergegebenen Mediums
 - Läuft ohne Root-Rechte unter dem normalen Benutzerkonto, startet bei der Anmeldung und übersteht Neustarts
 
+Mediendaten werden über MPRIS von Playern gelesen, die diese Schnittstelle
+über D-Bus bereitstellen. Bei VLC kann der Dateiname als Titel dienen, wenn
+der Player selbst keinen Titel meldet. Bei mehreren Playern wird der aktiv
+spielende bevorzugt.
+
 ![G510s-Steuerungsanwendung – v1](docs/screenshots/g510s-control-v1.png)
 
 ## Audio-Visualisierung

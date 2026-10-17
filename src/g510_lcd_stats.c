@@ -683,6 +683,41 @@ static void strip_browser_tab_noise(char *title) {
     }
 }
 
+static int media_hex_value(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    c = (char)tolower((unsigned char)c);
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    return -1;
+}
+
+static void media_title_from_url(const char *url, char *out, size_t outlen) {
+    const char *name = strrchr(url, '/');
+    name = name ? name + 1 : url;
+    const char *end = name + strcspn(name, "?#");
+    const char *dot = NULL;
+    for (const char *p = name; p < end; p++) {
+        if (*p == '.') dot = p;
+    }
+    if (dot && dot > name) end = dot;
+
+    size_t written = 0;
+    while (name < end && written + 1 < outlen) {
+        unsigned char c = (unsigned char)*name++;
+        if (c == '%' && name + 1 < end) {
+            int hi = media_hex_value(name[0]);
+            int lo = media_hex_value(name[1]);
+            if (hi >= 0 && lo >= 0) {
+                c = (unsigned char)((hi << 4) | lo);
+                name += 2;
+            }
+        }
+        if (c == '.' || c == '_') c = ' ';
+        out[written++] = (char)c;
+    }
+    while (written > 0 && out[written - 1] == ' ') written--;
+    out[written] = 0;
+}
+
 static void update_media_info(void) {
     g_media_title[0] = 0;
     g_media_artist[0] = 0;
@@ -712,25 +747,20 @@ static void update_media_info(void) {
        bridge) stayed correctly bounded to the real per-track duration
        the whole time, confirmed over the same window.
 
-       Fix: one single `-a` (all players) query instead of two, so this
-       isn't 2x the subprocess/D-Bus cost. Title/artist still come from
-       whichever line is plasma-browser-integration (best metadata,
-       same reasoning as above) or the first line if that player isn't
-       running. Position/length come from whichever line is NOT
-       plasma-browser-integration (the raw player, tied to the actual
-       media element) when one exists, else fall back to the same line
-       used for title/artist -- correct for the common non-browser case
-       (Spotify, VLC) where there's only one real source to begin with,
-       already covered by bugcheck_media_sensors.py's real end-to-end
-       test. */
+       Query every player once. Prefer a player that is actually Playing
+       over registered-but-paused players, which otherwise could win
+       simply because playerctl listed them first. When duplicate browser
+       players are both playing, keep plasma-browser-integration's richer
+       title/artist and the raw browser player's accurate timing. */
     FILE *p = popen("playerctl -a metadata --format "
-                     "'{{ playerName }}\x1f{{ title }}\x1f{{ artist }}\x1f{{ position }}\x1f{{ mpris:length }}' 2>/dev/null", "r");
+                     "'{{ playerName }}\x1f{{ title }}\x1f{{ artist }}\x1f{{ position }}\x1f{{ mpris:length }}\x1f{{ status }}\x1f{{ xesam:url }}' 2>/dev/null", "r");
     if (!p) return;
 
-    char title_buf[64] = "", artist_buf[48] = "";
+    char title_buf[64] = "", artist_buf[48] = "", url_buf[512] = "";
     long pos_us = -1, len_us = -1;
-    int have_title = 0, have_time = 0;
-    char line[256];
+    int title_playing = -1, title_is_plasma = 0;
+    int time_playing = -1, time_is_non_plasma = 0;
+    char line[1024];
     while (fgets(line, sizeof(line), p)) {
         char *nl = strchr(line, '\n');
         if (nl) *nl = 0;
@@ -747,29 +777,44 @@ static void update_media_info(void) {
         char *len_str = strchr(pos_str, '\x1f');
         if (!len_str) continue;
         *len_str = 0; len_str++;
+        char *status = strchr(len_str, '\x1f');
+        if (!status) continue;
+        *status = 0; status++;
+        char *url = strchr(status, '\x1f');
+        if (!url) continue;
+        *url = 0; url++;
 
         int is_plasma = (strcmp(player, "plasma-browser-integration") == 0);
+        int is_playing = (strcmp(status, "Playing") == 0);
 
-        if (!have_title || is_plasma) {
+        if (is_playing > title_playing ||
+            (is_playing == title_playing && is_plasma && !title_is_plasma)) {
             strncpy(title_buf, title, sizeof(title_buf) - 1);
             title_buf[sizeof(title_buf) - 1] = 0;
             strip_browser_tab_noise(title_buf);
             strncpy(artist_buf, artist, sizeof(artist_buf) - 1);
             artist_buf[sizeof(artist_buf) - 1] = 0;
-            have_title = 1;
+            strncpy(url_buf, url, sizeof(url_buf) - 1);
+            url_buf[sizeof(url_buf) - 1] = 0;
+            title_playing = is_playing;
+            title_is_plasma = is_plasma;
         }
-        if (!have_time || !is_plasma) {
+        if (is_playing > time_playing ||
+            (is_playing == time_playing && !is_plasma && !time_is_non_plasma)) {
             pos_us = atol(pos_str);
             len_us = atol(len_str);
-            have_time = 1;
-            if (!is_plasma) have_time = 2; /* a real non-bridge source found -- stop letting plasma's line override it */
+            time_playing = is_playing;
+            time_is_non_plasma = !is_plasma;
         }
     }
     pclose(p);
 
+    if (!title_buf[0] && url_buf[0])
+        media_title_from_url(url_buf, title_buf, sizeof(title_buf));
+
     /* Fallback fuer Player ohne MPRIS (z. B. radiotray-ng): Der Stream-Titel
        steht in PulseAudio als media.name ("Interpret - Titel"). */
-    if (!have_title || !title_buf[0]) {
+    if (!title_buf[0]) {
         FILE *pa = popen("LC_ALL=C pactl list sink-inputs 2>/dev/null", "r");
         if (pa) {
             char pl[512], name[256] = "";
@@ -807,7 +852,7 @@ static void update_media_info(void) {
 
     strncpy(g_media_title, title_buf, sizeof(g_media_title) - 1);
     strncpy(g_media_artist, artist_buf, sizeof(g_media_artist) - 1);
-    if (have_time && pos_us >= 0 && len_us >= 0) {
+    if (time_playing >= 0 && pos_us >= 0 && len_us >= 0) {
         int pos_s = (int)(pos_us / 1000000);
         int len_s = (int)(len_us / 1000000);
         /* Real bug, direct report: on a YouTube "premiere" (a live
