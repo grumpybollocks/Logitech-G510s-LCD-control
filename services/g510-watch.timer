@@ -1,0 +1,10 @@
+[Unit]
+Description=Sample G510 LCD service memory every 5 minutes (overnight watch)
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target
