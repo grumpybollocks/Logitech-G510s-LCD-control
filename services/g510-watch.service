@@ -1,0 +1,6 @@
+[Unit]
+Description=Log one G510 LCD service memory reading
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/g510-watch
