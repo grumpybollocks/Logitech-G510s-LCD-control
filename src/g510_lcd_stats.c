@@ -77,7 +77,8 @@ static void send_frame(g15canvas *canvas) {
        hidraw number can shift across reboots/replugs, this doesn't. */
     FILE *f = fopen("/dev/g510-lcd", "wb");
     if (!f) { perror("open /dev/g510-lcd"); return; }
-    fwrite(report, 1, 992, f);
+    size_t written = fwrite(report, 1, 992, f);
+    if (written != 992) fprintf(stderr, "g510-lcd-stats: short write to /dev/g510-lcd (%zu/992 bytes)\n", written);
     fclose(f);
 }
 
@@ -136,15 +137,27 @@ static void read_cpu_totals(unsigned long long *idle, unsigned long long *total)
     *total = user + nice + sys + idl + iowait + irq + softirq + steal;
 }
 
-static double get_cpu_percent(void) {
+/* Computed exactly once per frame (same reasoning/pattern as
+   update_net_speed()'s g_net_down_kbps/g_net_up_kbps below) into this cached
+   global -- get_cpu_percent() below is a pure read of it. Bug found by code
+   review: a custom screen with two elements both referencing CPU_PCT used to
+   call the old stateful get_cpu_percent() twice in the same draw, and the
+   second call's prev_idle/prev_total had just been updated moments earlier
+   by the first, so it computed a near-0% delta instead of the real value. */
+static double g_cpu_pct = 0.0;
+
+static void update_cpu_percent(void) {
     static unsigned long long prev_idle = 0, prev_total = 0;
     unsigned long long idle, total;
     read_cpu_totals(&idle, &total);
     unsigned long long dt = total - prev_total;
     unsigned long long di = idle - prev_idle;
-    double pct = (dt > 0) ? (100.0 * (double)(dt - di) / (double)dt) : 0.0;
+    g_cpu_pct = (dt > 0) ? (100.0 * (double)(dt - di) / (double)dt) : 0.0;
     prev_idle = idle; prev_total = total;
-    return pct;
+}
+
+static double get_cpu_percent(void) {
+    return g_cpu_pct;
 }
 
 /* returns used/total RAM in KB via MemTotal/MemAvailable */
@@ -166,13 +179,10 @@ static void get_ram_kb(long *used_kb, long *total_kb) {
     *used_kb = mem_total - mem_avail;
 }
 
+static int read_hwmon_temp_c(const char *path); /* defined below (v1.1 section); reused here */
+
 static int get_cpu_temp_c(void) {
-    FILE *f = fopen("/sys/class/hwmon/hwmon3/temp1_input", "r");
-    if (!f) return -1;
-    int millideg = 0;
-    fscanf(f, "%d", &millideg);
-    fclose(f);
-    return millideg / 1000;
+    return read_hwmon_temp_c("/sys/class/hwmon/hwmon3/temp1_input");
 }
 
 static void get_vram_bytes(unsigned long long *used, unsigned long long *total) {
@@ -283,9 +293,16 @@ static void update_net_speed(void) {
     }
     time_t now = time(NULL);
     double dt = prev_time > 0 ? difftime(now, prev_time) : 0;
-    if (dt > 0 && prev_rx > 0) {
+    /* rx/tx are unsigned, so a counter RESET (interface reconnect/driver
+       reload dropping them back near 0, not just the first-ever sample)
+       must also be excluded, or (rx - prev_rx) wraps to near 2^64 and shows
+       a nonsensical multi-million kbps reading for one tick. */
+    if (dt > 0 && prev_rx > 0 && rx >= prev_rx && tx >= prev_tx) {
         g_net_down_kbps = (rx - prev_rx) / 1024.0 / dt;
         g_net_up_kbps = (tx - prev_tx) / 1024.0 / dt;
+    } else if (dt > 0) {
+        g_net_down_kbps = 0;
+        g_net_up_kbps = 0;
     }
     prev_rx = rx; prev_tx = tx; prev_time = now;
 }
@@ -1212,6 +1229,19 @@ static void load_custom_screens(void) {
        but would have shown as ghost/duplicate text on the real keyboard
        the moment text elements were actually used without a service
        restart in between. */
+    static time_t last_mtime = 0;
+    static int have_last_mtime = 0;
+    struct stat st;
+    int stat_ok = (stat(custom_screens_path(), &st) == 0);
+    if (stat_ok && have_last_mtime && st.st_mtime == last_mtime) {
+        /* Unchanged since the last parse -- draw_custom_screen() calls this
+           every frame (up to ~20fps with a visualizer on screen), so skip
+           the fopen+full re-parse on every one of those when the GUI
+           hasn't actually edited the file since last time. */
+        return;
+    }
+    if (stat_ok) { last_mtime = st.st_mtime; have_last_mtime = 1; }
+    else have_last_mtime = 0; /* missing/unreadable -- always retry next call too */
     for (int i = 0; i < MAX_CUSTOM_SCREENS; i++) {
         custom_screens[i].count = 0;
         custom_screens[i].image_count = 0;
@@ -1247,7 +1277,15 @@ static void load_custom_screens(void) {
                     else if (strcmp(key, "style") == 0) { strncpy(el->style, val, sizeof(el->style) - 1); el->style[sizeof(el->style) - 1] = 0; }
                     else if (strcmp(key, "x") == 0) el->x = atoi(val);
                     else if (strcmp(key, "y") == 0) el->y = atoi(val);
-                    else if (strcmp(key, "width") == 0) el->width = atoi(val);
+                    else if (strcmp(key, "width") == 0) {
+                        /* clamp to screen bounds -- same reasoning as IMAGE's clamp
+                           below: custom_screens.txt is deliberately hand-editable,
+                           and an unclamped width fed straight into draw_row()'s bar
+                           drawing can push pixel coordinates far outside the 160x43
+                           canvas. */
+                        int w = atoi(val);
+                        el->width = (w > 0 && w <= G15_LCD_WIDTH) ? w : 40;
+                    }
                     else if (strcmp(key, "font") == 0) {
                         int f = atoi(val);
                         el->font_size = (f >= G15_TEXT_SMALL && f <= G15_TEXT_HUGE) ? f : G15_TEXT_SMALL;
@@ -1340,7 +1378,12 @@ static void load_custom_screens(void) {
                 }
                 tok = strtok(NULL, " ");
             }
-            if (vz->width > 0 && vz->height > 0) cs->visualizer_count++;
+            /* clamp to screen bounds -- same reasoning as IMAGE's clamp above: an
+               unclamped width/height fed into draw_visualizer_element()'s pixel-box
+               drawing is an out-of-bounds write risk, the exact class of bug the
+               IMAGE path was already hardened against. */
+            if (vz->width > 0 && vz->width <= G15_LCD_WIDTH &&
+                vz->height > 0 && vz->height <= G15_LCD_HEIGHT) cs->visualizer_count++;
         }
     }
     fclose(f);
@@ -1676,6 +1719,7 @@ int main(int argc, char **argv) {
         const char *outpath = argc >= 4 ? argv[3] : "/tmp/g510_preview.ppm";
         g15canvas canvas G15_CANVAS_AUTO = {0};
         g15r_initCanvas(&canvas);
+        update_cpu_percent();
         update_net_speed();
         update_media_info();
         viz_set_preview_placeholder();
@@ -1709,6 +1753,7 @@ int main(int argc, char **argv) {
         static time_t last_slow_update = 0;
         time_t now_t = time(NULL);
         if (difftime(now_t, last_slow_update) >= 1.0) {
+            update_cpu_percent();
             update_net_speed();
             update_media_info();
             last_slow_update = now_t;

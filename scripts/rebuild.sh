@@ -1,5 +1,9 @@
 #!/bin/bash
-# Rebuilds both G510 LCD programs and restarts their services.
+# Rebuilds both G510 LCD C programs and restarts all three services
+# (including the Python macro daemon -- nothing to rebuild there, but it
+# shares conventions, like the profile-file format and LED paths, with the
+# C side, so it restarts too rather than being left running on stale
+# assumptions with no indication this script skipped it).
 # Run this after editing g510_lcd_stats.c or g510_lcd_buttons.c.
 set -e
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -36,10 +40,12 @@ gcc g510_lcd_buttons.c -o g510_lcd_buttons
 echo "Restarting services..."
 systemctl --user restart g510-lcd-stats.service
 systemctl --user restart g510-lcd-buttons.service
+systemctl --user restart g510-macro-daemon.service
 
 echo ""
 echo "Done. Status:"
 systemctl --user status g510-lcd-stats.service --no-pager -l | head -5
 systemctl --user status g510-lcd-buttons.service --no-pager -l | head -5
+systemctl --user status g510-macro-daemon.service --no-pager -l | head -5
 
 read -p "Press Enter to close..."

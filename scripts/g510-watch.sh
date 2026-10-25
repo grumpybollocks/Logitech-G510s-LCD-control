@@ -1,5 +1,6 @@
 #!/bin/bash
-# g510-watch — zero-token overnight watcher for the G510 LCD service (added 2026-09-21).
+# g510-watch — zero-token overnight watcher for all three G510 services (added
+# 2026-09-21, extended to the buttons/macro-daemon services and the GUI 2026-10-25).
 #   g510-watch            append one reading to ~/.local/state/g510-watch.log (run by a 5-min systemd timer)
 #   g510-watch --summary  print min/max/latest memory, restarts and any alerts from the log
 # Healthy = rss ~3-6 MB and FLAT. The leak this watches for was +1 GB/hour.
@@ -34,6 +35,16 @@ state=$(systemctl --user is-active "$U")
 restarts=$(systemctl --user show "$U" -p NRestarts --value)
 cg=$(systemctl --user show "$U" -p MemoryCurrent --value)
 parec=$(pgrep -c -x parec)
+# Real gap found by code review: this watcher used to only ever look at
+# g510-lcd-stats.service, so a crash-loop on either sibling service (e.g.
+# g510-lcd-buttons.service hitting systemd's start-limit on a boot-time
+# device race, permanently killing L1-L5) would never show up here --
+# --summary would keep reporting HEALTHY the whole time. Same cheap
+# state+restart-count check as the primary service, just for the other two.
+state_buttons=$(systemctl --user is-active g510-lcd-buttons.service)
+restarts_buttons=$(systemctl --user show g510-lcd-buttons.service -p NRestarts --value)
+state_macros=$(systemctl --user is-active g510-macro-daemon.service)
+restarts_macros=$(systemctl --user show g510-macro-daemon.service -p NRestarts --value)
 # The GUI app (g510_app.py, unmanaged -- no systemd unit) had its own FreeType canvas leak
 # fixed 2026-09 (same bug class as g510_lcd_stats); watch its RSS too so a regression there
 # shows up here instead of just looking "big" in a system monitor one day.
@@ -55,8 +66,12 @@ alert=""; key=""
 [ "${tmpfs:-0}" -gt 1200 ]      && { alert="$alert tmpfs-${tmpfs}MB";        key="$key tmpfs-$((tmpfs/100))00MB"; }
 # app_rss baseline is ~30-50MB; 300MB is well above that but still catches a leak early.
 [ "${app_rss:-0}" -gt 300000 ]  && { alert="$alert app-rss-over-300MB";     key="$key app-rss-over-300MB"; }
+[ "$state_buttons" != "active" ]     && { alert="$alert buttons-$state_buttons";       key="$key buttons-$state_buttons"; }
+[ "${restarts_buttons:-0}" -gt 0 ]   && { alert="$alert buttons-restarts($restarts_buttons)"; key="$key buttons-restarts"; }
+[ "$state_macros" != "active" ]      && { alert="$alert macros-$state_macros";        key="$key macros-$state_macros"; }
+[ "${restarts_macros:-0}" -gt 0 ]    && { alert="$alert macros-restarts($restarts_macros)";   key="$key macros-restarts"; }
 
-echo "$(date +%F_%T) state=$state pid=$pid rss_kb=$rss cg_bytes=$cg restarts=$restarts parec=$parec tmpfs_mb=$tmpfs avail_mb=$avail swap_mb=$swap app_rss_kb=$app_rss top=$top${alert:+ ALERT:$alert}" >> "$LOG"
+echo "$(date +%F_%T) state=$state pid=$pid rss_kb=$rss cg_bytes=$cg restarts=$restarts parec=$parec tmpfs_mb=$tmpfs avail_mb=$avail swap_mb=$swap app_rss_kb=$app_rss buttons_state=$state_buttons buttons_restarts=$restarts_buttons macros_state=$state_macros macros_restarts=$restarts_macros top=$top${alert:+ ALERT:$alert}" >> "$LOG"
 
 # One desktop notification per distinct problem category (key strips live numbers so
 # jitter, e.g. tmpfs wobbling 847/848/849MB, can't defeat the de-dup and spam every 5 min).
