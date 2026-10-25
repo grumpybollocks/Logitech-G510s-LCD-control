@@ -284,8 +284,18 @@ echo "{rgb[0]} {rgb[1]} {rgb[2]}" > /sys/class/leds/g15::kbd_backlight/multi_int
         DEFAULTS_SCRIPT.chmod(0o755)
     except PermissionError:
         pass
-    DEFAULTS_SCRIPT_DATA_DIR.write_text(script)
-    DEFAULTS_SCRIPT_DATA_DIR.chmod(0o755)
+    # Real bug found by code review: this second write is structurally
+    # identical to the one above but had no guard at all, so on.apply()/
+    # on_set_as_default()/on_save_all() (every call site of this function)
+    # would raise straight out of a PyQt5 slot if ~/.local/share/g510-lcd
+    # ever became unwritable (disk full, permission drift, read-only
+    # remount) -- the same class of error the write right above this one
+    # is already hardened against.
+    try:
+        DEFAULTS_SCRIPT_DATA_DIR.write_text(script)
+        DEFAULTS_SCRIPT_DATA_DIR.chmod(0o755)
+    except PermissionError:
+        pass
 
 
 
@@ -355,6 +365,21 @@ def read_macro_record_led():
         return False
 
 
+def atomic_write_text(path, content):
+    """Write content to path atomically (tmp file + rename), same
+    pattern/reasoning already established on the C side for write_ppm() in
+    g510_lcd_stats.c: a plain write_text() truncates the file in place, and a
+    reader (g510_macro_daemon.py's load_macros(), or the C daemon reloading
+    custom_screens.txt every draw frame) that opens it mid-write can see a
+    torn/partial/empty file. rename() on POSIX is atomic when source and
+    destination share a filesystem (always true here, both under DATA_DIR),
+    so any concurrent reader sees either the complete old file or the
+    complete new one, never a mix."""
+    tmp = Path(str(path) + ".tmp")
+    tmp.write_text(content)
+    tmp.replace(path)
+
+
 def load_macros():
     if MACROS_FILE.exists():
         try:
@@ -370,13 +395,13 @@ def save_macro(profile, gkey, value, kind="keys"):
     g510_macro_daemon.py checks 'type' to decide how to replay it."""
     macros = load_macros()
     macros.setdefault(profile, {})[gkey] = {"type": kind, "value": value}
-    MACROS_FILE.write_text(json.dumps(macros, indent=2))
+    atomic_write_text(MACROS_FILE, json.dumps(macros, indent=2))
 
 
 def clear_macro(profile, gkey):
     macros = load_macros()
     macros.setdefault(profile, {}).pop(gkey, None)
-    MACROS_FILE.write_text(json.dumps(macros, indent=2))
+    atomic_write_text(MACROS_FILE, json.dumps(macros, indent=2))
 
 
 class RecorderThread(QThread):
@@ -570,7 +595,21 @@ class KeyboardTab(QWidget):
     sync with the daemon/hardware, exactly like the old GKeysTab did."""
     def __init__(self):
         super().__init__()
-        self.current_profile = "M1"
+        # Real bug found by code review: this used to hardcode "M1"
+        # regardless of the real active profile on disk -- the same
+        # shallow-default bug class g510_macro_daemon.py's own
+        # profile-resume fix already eliminated on the daemon side (see
+        # write_active_profile()/main() there). If the GUI is (re)started
+        # while M2 or M3 is actually active (app relaunch, or recovery
+        # from a crash), this showed the wrong profile highlighted until
+        # the first poll_hardware_state() tick (~500ms later) self-
+        # corrected -- same read pattern poll_hardware_state() already
+        # uses below, just applied at startup too.
+        try:
+            live = active_profile_file().read_text().strip()
+        except Exception:
+            live = None
+        self.current_profile = live if live in ("M1", "M2", "M3") else "M1"
 
         root = QHBoxLayout()
 
@@ -1072,7 +1111,7 @@ def save_custom_screens(config):
                     f"ELEMENT sensor={el['sensor']} style={el['style']} "
                     f"x={el['x']} y={el['y']} width={width} font={el.get('font_size', 0)}"
                 )
-    CUSTOM_SCREENS_FILE.write_text("\n".join(lines) + "\n")
+    atomic_write_text(CUSTOM_SCREENS_FILE, "\n".join(lines) + "\n")
 
 
 def _parse_bounds_meta(meta_path):
@@ -2509,6 +2548,20 @@ class MainWindow(QMainWindow):
             )
             self.status.showMessage(f"✓ Saved & verified on disk at {now}")
             QMessageBox.information(self, "Saved", msg)
+
+    def closeEvent(self, event):
+        # Real bug found by code review: no closeEvent existed here at all,
+        # so closing the window while an image resize drag is still running
+        # (CustomScreensTab._image_resize_worker, started in
+        # on_image_resize_commit()) never waits for that QThread before Qt/
+        # Python tear down the process -- exactly the "QThread: Destroyed
+        # while thread is still running" crash RecorderThread's own fix
+        # comments describe reproducing twice, just never ported to this
+        # second QThread-owning code path.
+        worker = getattr(self.custom_tab, "_image_resize_worker", None)
+        if worker is not None:
+            worker.wait()
+        super().closeEvent(event)
 
 
 if __name__ == "__main__":

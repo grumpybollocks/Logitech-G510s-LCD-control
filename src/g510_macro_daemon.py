@@ -97,7 +97,16 @@ def profile_path():
 
 
 def write_active_profile(name):
-    profile_path().write_text(name)
+    # Real bug found by code review: unguarded here (called unconditionally at
+    # startup and on every M-key press), while the GUI's write to this same file
+    # (active_profile_file().write_text(name) in g510_app.py) is already wrapped
+    # the same way below -- a transient XDG_RUNTIME_DIR issue (e.g. a logind
+    # session-teardown race) would crash this whole daemon where the GUI doing
+    # the identical write would just silently continue.
+    try:
+        profile_path().write_text(name)
+    except Exception:
+        pass
 
 
 def main():
@@ -153,9 +162,25 @@ def main():
         last_mtime = pf.stat().st_mtime
 
     while True:
-        r, _, _ = select.select([dev.fd], [], [], 0.2)
-        if r:
-            for event in dev.read():
+        # Real bug found by code review: an unplug mid-run raises OSError out of
+        # select()/dev.read() here, confirmed possible by _wait_for_device()'s own
+        # docstring above -- uncaught, it crashed the whole daemon, and systemd's
+        # Restart=on-failure then had to fork/exec a fresh interpreter and redo the
+        # whole startup poll every time: the exact repeated-restart churn
+        # _wait_for_device() was built to eliminate, just moved to a different
+        # trigger point (mid-run instead of startup). Narrowly scoped to just the
+        # device I/O, not the macro-execution block below, so a real error from
+        # running a macro command still surfaces normally instead of being treated
+        # as a device-loss event.
+        try:
+            r, _, _ = select.select([dev.fd], [], [], 0.2)
+            events = list(dev.read()) if r else []
+        except OSError:
+            dev = _wait_for_device(DEVICE_PATH)
+            continue
+
+        if events:
+            for event in events:
                 if event.type != ecodes.EV_KEY or event.value != 1:  # key-down only
                     continue
 

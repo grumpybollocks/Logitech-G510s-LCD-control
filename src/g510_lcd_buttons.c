@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
+#include <sys/stat.h>
 #include <linux/input.h>
 
 #define NUM_SCREENS 2
@@ -49,7 +51,34 @@ static void write_screen(int s) {
     fclose(f);
 }
 
+/* Same helper/reasoning as g510_lcd_stats.c's mkdir_p(): plain mkdir() can't
+   create missing parent directories in one call, so on a fresh account where
+   ~/.local/share doesn't exist yet, fopen(..., "a") below would fail silently
+   and every physical L2-L5 press would just never get logged, forever. */
+static void mkdir_p(const char *path) {
+    char tmp[256];
+    snprintf(tmp, sizeof(tmp), "%s", path);
+    for (char *p = tmp + 1; *p; p++) {
+        if (*p == '/') {
+            *p = 0;
+            mkdir(tmp, 0755);
+            *p = '/';
+        }
+    }
+    mkdir(tmp, 0755);
+}
+
 static void log_button(const char *name) {
+    const char *path = button_log_path();
+    const char *slash = strrchr(path, '/');
+    if (slash) {
+        char dir[256];
+        size_t len = (size_t)(slash - path);
+        if (len >= sizeof(dir)) len = sizeof(dir) - 1;
+        memcpy(dir, path, len);
+        dir[len] = 0;
+        mkdir_p(dir);
+    }
     FILE *f = fopen(button_log_path(), "a");
     if (!f) return;
     time_t now = time(NULL);
@@ -67,9 +96,32 @@ static long ms_since(struct timespec *last) {
     return (now.tv_sec - last->tv_sec) * 1000 + (now.tv_nsec - last->tv_nsec) / 1000000;
 }
 
+/* Real bug found by code review: the old unguarded fopen() at startup
+   returned exit(1) on failure exactly like the intentional mid-run
+   device-loss exit at the bottom of this file -- but with no internal
+   retry, a boot-time udev race (device not enumerated yet) or the
+   keyboard being briefly unavailable hits systemd's default
+   RestartSec=3/StartLimitBurst=5 within ~15 seconds and the unit gets
+   marked permanently failed, needing a manual `systemctl --user
+   reset-failed` or reboot even after the keyboard is replugged. Same
+   fix as g510_macro_daemon.py's _wait_for_device(): poll internally
+   instead of crash-looping through systemd. */
+static FILE *wait_for_device(void) {
+    int printed = 0;
+    while (1) {
+        FILE *f = fopen("/dev/g510-keys", "rb");
+        if (f) return f;
+        if (!printed) {
+            fprintf(stderr, "g510-lcd-buttons: /dev/g510-keys not found yet -- "
+                             "waiting for the keyboard to be plugged in...\n");
+            printed = 1;
+        }
+        sleep(3);
+    }
+}
+
 int main(void) {
-    FILE *f = fopen("/dev/g510-keys", "rb");
-    if (!f) { perror("open /dev/g510-keys"); return 1; }
+    FILE *f = wait_for_device();
 
     /* These switches bounce (confirmed: single physical presses were
        logging 2-4 times). Track the last accepted press time per key
