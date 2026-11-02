@@ -223,12 +223,15 @@ static sysfs_lookup_t g_hwmon_board = {"gigabyte_wmi", "", 0};
 static sysfs_lookup_t g_drm_gpu     = {"amdgpu", "", 0};
 
 static int read_sysfs_word(const char *path, char *out, size_t outlen) {
+    if (outlen < 2) return 0;
     FILE *f = fopen(path, "r");
     if (!f) return 0;
     int ok = fgets(out, (int)outlen, f) != NULL;
     fclose(f);
-    if (ok) out[strcspn(out, "\n")] = 0;
-    return ok;
+    if (!ok) return 0;
+    char *nl = strchr(out, '\n');       /* fgets always NUL-terminates within outlen */
+    if (nl) *nl = 0;
+    return 1;
 }
 
 static int hwmon_matches(const char *dir, const char *want) {
