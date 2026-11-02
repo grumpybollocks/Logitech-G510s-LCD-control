@@ -39,6 +39,13 @@ it's gone from GitHub now.
   merges back into `main` when a feature is done and physically
   confirmed on the real keyboard -- nothing gets tagged or merged
   before that, standing rule, not a delay.
+- **`perf/on-demand-capture-sensor-lookup`** (2026-11-02) -- system-impact
+  audit fixes: audio capture and `playerctl` only while the visible
+  screen needs them, capture restart 30 s -> 300 s, sensors looked up
+  by driver name instead of hwmonN/cardN numbers, no per-frame log flood
+  when the LCD is unplugged, plus `tests/run-tests.sh`. Opened as a
+  draft PR; merges into `main` after the physical check on the real
+  keyboard (see G510_README.md, Current Status).
 
 ## Historical / frozen branches (kept for reference, not deleted)
 

@@ -79,6 +79,11 @@ fall out of sync with "what app is currently playing." Resize it like
 any other element and it fills the extra space with more bars, not
 just bigger ones.
 
+It only listens while a screen with a visualizer is actually showing
+on the LCD — switch to the stats or clock screen and the audio capture
+stops completely (same for the song-info lookups), so it costs nothing
+when you're not looking at it.
+
 ## How it works
 
 A PyQt5 app (`g510_app.py`) talks straight to `/dev/g510-lcd` and
