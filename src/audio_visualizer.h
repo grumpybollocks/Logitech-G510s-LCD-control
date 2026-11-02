@@ -108,8 +108,18 @@
    buffer fills back up -- verified this delay is ~1-1.5s in practice,
    short enough that bars simply decay briefly rather than looking
    broken. Longer intervals make that gap rarer at the cost of more
-   disk (30s is ~2.6MB, trivial either way). */
-#define VIZ_RESTART_SEC 30
+   RAM (the file lives on the /run/user tmpfs).
+   Raised 30 -> 300 s (2026-11-02 audit): every restart is a NEW audio
+   stream, and wireplumber re-saves ~/.local/state/wireplumber/
+   stream-properties with fsync for each one -- measured with bpftrace
+   as 2 forced saves per minute, each costing ~0.5 MB of btrfs metadata
+   writes on the SSD. Tried stream properties state.restore-props=false
+   and state.restore=false: wireplumber 0.5.18 still saved (tested, not
+   assumed), so fewer restarts is the fix. The reader only ever reads
+   the newest window from the end of the file (see update_visualizer),
+   so a bigger file changes nothing visible; max size is now
+   44100 * 2 * 300 = ~26.5 MB of RAM. */
+#define VIZ_RESTART_SEC 300
 
 static pid_t g_viz_pid = -1;
 static time_t g_viz_started = 0;

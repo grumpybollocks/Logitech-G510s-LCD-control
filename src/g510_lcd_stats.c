@@ -23,6 +23,13 @@
 #include <sys/stat.h>
 #include <dirent.h>
 
+/* LCD device node (stable udev symlink). Overridable ONLY at build time,
+   so tests can exercise the "device missing" path without unplugging
+   the keyboard; normal builds are unchanged. */
+#ifndef G510_LCD_DEV
+#define G510_LCD_DEV "/dev/g510-lcd"
+#endif
+
 /* MEMORY LEAK FIX: in this TTF_SUPPORT build, g15r_initCanvas() calls
    FT_Init_FreeType(&canvas->ftLib) -- a whole FreeType library (~2.7KB,
    several allocations) per canvas -- and libg15render has no matching
@@ -75,10 +82,21 @@ static void send_frame(g15canvas *canvas) {
 
     /* Stable symlink from the udev rule (99-g510-lcd.rules) -- the raw
        hidraw number can shift across reboots/replugs, this doesn't. */
-    FILE *f = fopen("/dev/g510-lcd", "wb");
-    if (!f) { perror("open /dev/g510-lcd"); return; }
+    FILE *f = fopen(G510_LCD_DEV, "wb");
+    /* Log the device going away / coming back ONCE each (2026-11-02
+       audit). This used to perror() on every frame: with the keyboard
+       unplugged or mid USB reset that is 20 journal lines/second on a
+       visualizer screen (72,000/hour), all written to the SSD. Not seen
+       in this machine's journal (back to 2026-10-07), so latent, but a
+       single replug would have triggered it. */
+    static int lcd_missing = 0;
+    if (!f) {
+        if (!lcd_missing) { perror("open " G510_LCD_DEV " (will retry silently every frame)"); lcd_missing = 1; }
+        return;
+    }
+    if (lcd_missing) { fprintf(stderr, "g510-lcd-stats: " G510_LCD_DEV " is back\n"); lcd_missing = 0; }
     size_t written = fwrite(report, 1, 992, f);
-    if (written != 992) fprintf(stderr, "g510-lcd-stats: short write to /dev/g510-lcd (%zu/992 bytes)\n", written);
+    if (written != 992) fprintf(stderr, "g510-lcd-stats: short write to " G510_LCD_DEV " (%zu/992 bytes)\n", written);
     fclose(f);
 }
 
@@ -181,16 +199,121 @@ static void get_ram_kb(long *used_kb, long *total_kb) {
 
 static int read_hwmon_temp_c(const char *path); /* defined below (v1.1 section); reused here */
 
+/* Sensor directories are looked up by DRIVER NAME, not by number.
+   Real latent bug found in a 2026-11-02 audit: these were hard-coded as
+   hwmon2 (amdgpu), hwmon3 (k10temp), hwmon4 (gigabyte_wmi) and card1.
+   Those numbers are handed out in driver-probe order at boot, and USB
+   devices register hwmon entries too (the MX Master's hidpp_battery is
+   hwmon6 on this machine), so a different probe order would make the
+   LCD silently show the wrong sensor. The mapping was correct on the
+   day of the audit; this keeps it correct. A found path is re-verified
+   every 30 s (one tiny sysfs read) so a replug/driver reload that
+   reuses a number for a different device can't silently swap sensors.
+   Not found -> NULL -> callers show the same "no reading" they always
+   showed for a missing file. */
+typedef struct {
+    const char *want;   /* hwmon "name" file content, or DRM driver name */
+    char dir[320];
+    time_t checked;
+} sysfs_lookup_t;
+
+static sysfs_lookup_t g_hwmon_cpu   = {"k10temp", "", 0};
+static sysfs_lookup_t g_hwmon_gpu   = {"amdgpu", "", 0};
+static sysfs_lookup_t g_hwmon_board = {"gigabyte_wmi", "", 0};
+static sysfs_lookup_t g_drm_gpu     = {"amdgpu", "", 0};
+
+static int read_sysfs_word(const char *path, char *out, size_t outlen) {
+    FILE *f = fopen(path, "r");
+    if (!f) return 0;
+    int ok = fgets(out, (int)outlen, f) != NULL;
+    fclose(f);
+    if (ok) out[strcspn(out, "\n")] = 0;
+    return ok;
+}
+
+static int hwmon_matches(const char *dir, const char *want) {
+    char p[352], name[48];
+    snprintf(p, sizeof(p), "%s/name", dir);
+    return read_sysfs_word(p, name, sizeof(name)) && strcmp(name, want) == 0;
+}
+
+static const char *hwmon_dir(sysfs_lookup_t *c) {
+    time_t now = time(NULL);
+    if (c->checked && difftime(now, c->checked) < 30) return c->dir[0] ? c->dir : NULL; /* cached hit OR cached miss */
+    if (c->dir[0] && hwmon_matches(c->dir, c->want)) { c->checked = now; return c->dir; }
+    c->dir[0] = 0;
+    c->checked = now; /* also rate-limits rescans while the sensor is missing */
+    DIR *d = opendir("/sys/class/hwmon");
+    if (!d) return NULL;
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        if (strncmp(e->d_name, "hwmon", 5) != 0) continue;
+        char cand[320];
+        snprintf(cand, sizeof(cand), "/sys/class/hwmon/%s", e->d_name);
+        if (hwmon_matches(cand, c->want)) { snprintf(c->dir, sizeof(c->dir), "%s", cand); break; }
+    }
+    closedir(d);
+    return c->dir[0] ? c->dir : NULL;
+}
+
+/* drm "cardN/device" whose kernel driver is c->want (only plain cardN
+   entries -- cardN-DP-1 etc. are connectors) and that exposes VRAM info. */
+static int drm_matches(const char *devdir, const char *want) {
+    char p[352], link[512], vram[352];
+    snprintf(p, sizeof(p), "%s/driver", devdir);
+    ssize_t n = readlink(p, link, sizeof(link) - 1);
+    if (n <= 0) return 0;
+    link[n] = 0;
+    const char *base = strrchr(link, '/');
+    base = base ? base + 1 : link;
+    snprintf(vram, sizeof(vram), "%s/mem_info_vram_total", devdir);
+    return strcmp(base, want) == 0 && access(vram, R_OK) == 0;
+}
+
+static const char *drm_device_dir(sysfs_lookup_t *c) {
+    time_t now = time(NULL);
+    if (c->checked && difftime(now, c->checked) < 30) return c->dir[0] ? c->dir : NULL; /* cached hit OR cached miss */
+    if (c->dir[0] && drm_matches(c->dir, c->want)) { c->checked = now; return c->dir; }
+    c->dir[0] = 0;
+    c->checked = now;
+    DIR *d = opendir("/sys/class/drm");
+    if (!d) return NULL;
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        const char *s = e->d_name;
+        if (strncmp(s, "card", 4) != 0 || !s[4] || strspn(s + 4, "0123456789") != strlen(s + 4)) continue;
+        char cand[320];
+        snprintf(cand, sizeof(cand), "/sys/class/drm/%s/device", s);
+        if (drm_matches(cand, c->want)) { snprintf(c->dir, sizeof(c->dir), "%s", cand); break; }
+    }
+    closedir(d);
+    return c->dir[0] ? c->dir : NULL;
+}
+
+/* tempN_input of a looked-up hwmon device; -1 (same as a missing file) if not found. */
+static int hwmon_temp_c(sysfs_lookup_t *c, int n) {
+    const char *dir = hwmon_dir(c);
+    if (!dir) return -1;
+    char path[352];
+    snprintf(path, sizeof(path), "%s/temp%d_input", dir, n);
+    return read_hwmon_temp_c(path);
+}
+
 static int get_cpu_temp_c(void) {
-    return read_hwmon_temp_c("/sys/class/hwmon/hwmon3/temp1_input");
+    return hwmon_temp_c(&g_hwmon_cpu, 1);
 }
 
 static void get_vram_bytes(unsigned long long *used, unsigned long long *total) {
     FILE *f;
+    char path[352];
     *used = 0; *total = 0;
-    f = fopen("/sys/class/drm/card1/device/mem_info_vram_used", "r");
+    const char *dev = drm_device_dir(&g_drm_gpu);
+    if (!dev) return;
+    snprintf(path, sizeof(path), "%s/mem_info_vram_used", dev);
+    f = fopen(path, "r");
     if (f) { fscanf(f, "%llu", used); fclose(f); }
-    f = fopen("/sys/class/drm/card1/device/mem_info_vram_total", "r");
+    snprintf(path, sizeof(path), "%s/mem_info_vram_total", dev);
+    f = fopen(path, "r");
     if (f) { fscanf(f, "%llu", total); fclose(f); }
 }
 
@@ -225,7 +348,11 @@ static int read_hwmon_temp_c(const char *path) {
 }
 
 static double get_gpu_percent(void) {
-    FILE *f = fopen("/sys/class/drm/card1/device/gpu_busy_percent", "r");
+    const char *dev = drm_device_dir(&g_drm_gpu);
+    if (!dev) return -1;
+    char path[352];
+    snprintf(path, sizeof(path), "%s/gpu_busy_percent", dev);
+    FILE *f = fopen(path, "r");
     if (!f) return -1;
     int v = 0;
     fscanf(f, "%d", &v);
@@ -1092,15 +1219,15 @@ static void get_sensor_value(const char *key, double *pct_for_bar, char *disp, s
         if (v < 0) snprintf(disp, displen, "N/A");
         else { *pct_for_bar = v; snprintf(disp, displen, "%d%%", (int)v); }
     } else if (strcmp(key, "GPU_EDGE_TEMP") == 0) {
-        int t = read_hwmon_temp_c("/sys/class/hwmon/hwmon2/temp1_input");
+        int t = hwmon_temp_c(&g_hwmon_gpu, 1);
         *pct_for_bar = t > 0 ? t * 100.0 / 90.0 : 0;
         snprintf(disp, displen, "%d\xB0" "C", t);
     } else if (strcmp(key, "GPU_HOTSPOT_TEMP") == 0) {
-        int t = read_hwmon_temp_c("/sys/class/hwmon/hwmon2/temp2_input");
+        int t = hwmon_temp_c(&g_hwmon_gpu, 2);
         *pct_for_bar = t > 0 ? t * 100.0 / 90.0 : 0;
         snprintf(disp, displen, "%d\xB0" "C", t);
     } else if (strcmp(key, "GPU_VRAM_TEMP") == 0) {
-        int t = read_hwmon_temp_c("/sys/class/hwmon/hwmon2/temp3_input");
+        int t = hwmon_temp_c(&g_hwmon_gpu, 3);
         *pct_for_bar = t > 0 ? t * 100.0 / 90.0 : 0;
         snprintf(disp, displen, "%d\xB0" "C", t);
     } else if (strcmp(key, "SWAP_PCT") == 0) {
@@ -1135,9 +1262,7 @@ static void get_sensor_value(const char *key, double *pct_for_bar, char *disp, s
         snprintf(disp, displen, "%s", g_media_elapsed);
     } else if (strncmp(key, "MB_TEMP", 7) == 0) {
         int n = atoi(key + 7);
-        char path[128];
-        snprintf(path, sizeof(path), "/sys/class/hwmon/hwmon4/temp%d_input", n);
-        int t = read_hwmon_temp_c(path);
+        int t = hwmon_temp_c(&g_hwmon_board, n);
         *pct_for_bar = t > 0 ? t * 100.0 / 90.0 : 0;
         snprintf(disp, displen, "%d\xB0" "C", t);
     }
@@ -1750,17 +1875,40 @@ int main(int argc, char **argv) {
            every iteration regardless -- it's cheap (a few thousand
            multiply-adds, see audio_visualizer.h) and IS the thing that
            needs to be fast. */
+        /* On-demand capture/media (2026-11-02 audit). Both used to run on
+           EVERY screen, all day: parec recorded desktop audio 24/7 and was
+           restarted every VIZ_RESTART_SEC even on the stats screen, and
+           playerctl was spawned once a second. Measured cost: each new
+           parec stream makes wireplumber re-save its stream-properties
+           file with fsync -- 40 forced saves per 10 min in a bpftrace run,
+           roughly 2.6 GB/day of SSD writes on this btrfs system -- plus
+           ~86,400 playerctl launches/day (~6 ms CPU each). Now: capture
+           only while the visible screen has a visualizer (L2/L5 today),
+           and query media only while it has a MEDIA_* element (L5). */
+        int screen = read_screen();
+        custom_screen_t *cur_cs = (screen >= 2 && screen <= 5) ? &custom_screens[screen - 2] : NULL;
+        int need_viz = cur_cs && cur_cs->visualizer_count > 0;
+        int need_media = 0;
+        if (cur_cs) {
+            for (int i = 0; i < cur_cs->count; i++) {
+                if (strncmp(cur_cs->elements[i].sensor, "MEDIA_", 6) == 0) { need_media = 1; break; }
+            }
+        }
+
         static time_t last_slow_update = 0;
+        static int media_was_needed = 0;
         time_t now_t = time(NULL);
+        if (need_media && !media_was_needed) last_slow_update = 0; /* fresh title right on switching to the screen */
+        media_was_needed = need_media;
         if (difftime(now_t, last_slow_update) >= 1.0) {
             update_cpu_percent();
             update_net_speed();
-            update_media_info();
+            if (need_media) update_media_info();
             last_slow_update = now_t;
         }
-        update_visualizer();
+        if (need_viz) update_visualizer();
+        else if (g_viz_pid > 0) viz_stop_capture(); /* left a visualizer screen: stop recording */
 
-        int screen = read_screen();
         if (screen == 1) {
             draw_clock_screen(&canvas);
             send_frame(&canvas);
