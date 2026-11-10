@@ -197,6 +197,7 @@ def main():
     # other G/M-key until that app was closed). Kept here so finished ones
     # are reaped instead of lingering as zombies.
     running = []
+    reconnected_at, flaps, relight_at = 0.0, 0, 0.0
 
     while True:
         # Real bug found by code review: an unplug mid-run raises OSError out of
@@ -224,9 +225,29 @@ def main():
                 dev.close()
             except OSError:
                 pass
-            time.sleep(POLL_FAST_S)
-            dev = _wait_for_device(DEVICE_PATH, disconnected=True)
+            # flap guard, same as g510_lcd_buttons.c: failing again within
+            # 2 s of reconnecting doubles the pause and is logged once
+            if time.monotonic() - reconnected_at < 2.0:
+                flaps += 1
+                if flaps == 1:
+                    print(f"{DEVICE_PATH} keeps failing right after reconnecting -- backing off", flush=True)
+            else:
+                flaps = 0
+            time.sleep(min(POLL_FAST_S * (2 ** min(flaps, 4)), POLL_SLOW_S))
+            dev = _wait_for_device(DEVICE_PATH, disconnected=(flaps == 0))
+            reconnected_at = time.monotonic()
+            # the re-enumerated keyboard's M1-M3 LEDs come back in their
+            # power-on state: re-light the active profile's
+            # (and once more 2 s later: udev may not have made the new LED
+            # files writable yet, and light_profile_led ignores failures)
+            light_profile_led(active_profile)
+            relight_at = time.monotonic() + 2.0
             continue
+        if events:
+            flaps = 0
+        if relight_at and time.monotonic() >= relight_at:
+            light_profile_led(active_profile)
+            relight_at = 0.0
 
         if running:
             running[:] = [p for p in running if p.poll() is None]

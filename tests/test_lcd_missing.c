@@ -11,6 +11,7 @@
 #endif
 #define DEVDIR TEST_SCRATCH "/fakedev"
 #define G510_LCD_DEV DEVDIR "/g510-lcd"
+#define G510_LCD_NO_ID_CHECK  /* the fake device is a FIFO, not a hidraw node */
 #define main lcd_main
 #include "../src/g510_lcd_stats.c"
 #undef main
