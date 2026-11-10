@@ -210,7 +210,11 @@ def main():
         # running a macro command still surfaces normally instead of being treated
         # as a device-loss event.
         try:
-            r, _, _ = select.select([dev.fd], [], [], 0.2)
+            # 0.5 s (was 0.2): this timeout only paces the check for a
+            # GUI-initiated profile switch below -- key presses wake the
+            # select() immediately -- and the GUI itself polls that file
+            # every 500 ms, so 0.2 s just meant 5 wakeups/s, 24/7.
+            r, _, _ = select.select([dev.fd], [], [], 0.5)
             events = list(dev.read()) if r else []
         except OSError:
             # close the dead handle (it used to leak one fd per disconnect),
@@ -243,16 +247,35 @@ def main():
                     entry = macros.get(active_profile, {}).get(gkey)
                     if not entry:
                         continue
+                    # (2026-11-10) A missing/broken ydotool or a malformed entry
+                    # (hand-edited macros.json, {"type": "keys"} with no value)
+                    # used to raise out of here and kill the daemon -- and every
+                    # press of that key then crash-looped it through systemd.
+                    keys = None
                     if isinstance(entry, str):  # legacy format, pre-command-support
-                        subprocess.run(["ydotool", "key"] + entry.split())
-                    elif entry.get("type") == "command":
+                        keys = entry
+                    elif isinstance(entry, dict) and entry.get("type") != "command":
+                        keys = entry.get("value")
+                    if keys is not None:
+                        if not isinstance(keys, str) or not keys.split():
+                            print(f"{gkey}: macro has no keys -- ignored", flush=True)
+                            continue
                         try:
-                            running.append(subprocess.Popen(entry["value"], shell=True,
-                                                            start_new_session=True))
+                            subprocess.run(["ydotool", "key"] + keys.split(), timeout=30)
+                        except (OSError, subprocess.SubprocessError) as e:
+                            print(f"{gkey}: ydotool failed: {e}", flush=True)
+                        continue
+                    if not isinstance(entry, dict):
+                        continue
+                    if entry.get("type") == "command":
+                        cmd = entry.get("value")
+                        if not isinstance(cmd, str) or not cmd.strip():
+                            print(f"{gkey}: command macro is empty -- ignored", flush=True)
+                            continue
+                        try:
+                            running.append(subprocess.Popen(cmd, shell=True, start_new_session=True))
                         except OSError as e:
                             print(f"{gkey}: could not start command: {e}", flush=True)
-                    else:  # type == "keys"
-                        subprocess.run(["ydotool", "key"] + entry["value"].split())
 
         # Pick up a GUI-initiated profile switch too -- the file's
         # mtime only moves when something (us, or the GUI) actually

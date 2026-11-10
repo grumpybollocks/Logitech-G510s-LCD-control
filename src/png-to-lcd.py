@@ -83,7 +83,22 @@ hex_bytes = re.findall(r"0x([0-9A-Fa-f]{2})", xbm_src)
 # what g15r_drawXBM actually expects.
 raw = bytes((~int(h, 16)) & 0xFF for h in hex_bytes)
 
-with open(outfile, "wb") as f:
-    f.write(raw)
+# Atomic replace (2026-11-10): the live LCD daemon and the GUI preview
+# read this file every frame, and a resize rewrites it in place while
+# they're reading -- write a temp file in the same directory, then
+# rename() over the target, so readers see the old or the new bitmap,
+# never half of one.
+out_dir = os.path.dirname(os.path.abspath(outfile)) or "."
+fd, tmp_out = tempfile.mkstemp(prefix=".png-to-lcd-", dir=out_dir)
+try:
+    with os.fdopen(fd, "wb") as f:
+        f.write(raw)
+    os.replace(tmp_out, outfile)
+except BaseException:
+    try:
+        os.unlink(tmp_out)
+    except OSError:
+        pass
+    raise
 
 print(f"{w} {h}")

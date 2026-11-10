@@ -11,7 +11,9 @@ Phase 1: Backlight tab (color/brightness + service control).
 Phase 2: Custom Screens tab (AIDA64-style sensor dashboard builder for
          the L2-L5 buttons, with a live preview of the real LCD output).
 """
+import os
 import sys
+import tempfile
 import json
 import shutil
 import subprocess
@@ -441,6 +443,7 @@ class RecorderThread(QThread):
         except OSError:
             self.finished_recording.emit("", False)
             return
+        ok = True
         try:
             while not self._stop:
                 # Poll with a short timeout instead of a blocking read --
@@ -453,10 +456,19 @@ class RecorderThread(QThread):
                 for event in dev.read():
                     if event.type == ecodes.EV_KEY:
                         self._events.append(f"{event.code}:{event.value}")
+        except OSError:
+            # (2026-11-10) The keyboard dropped off USB mid-recording -- routine:
+            # plugging/unplugging the headset jack re-enumerates the G510s.
+            # This used to escape run() (and ungrab() below raised again on the
+            # dead device), which aborts the whole GUI process (see above).
+            ok = False
         finally:
-            dev.ungrab()
-            dev.close()
-        self.finished_recording.emit(" ".join(self._events), True)
+            for cleanup in (dev.ungrab, dev.close):
+                try:
+                    cleanup()
+                except OSError:
+                    pass
+        self.finished_recording.emit(" ".join(self._events) if ok else "", ok)
 
 
 class MacroRecordDialog(QDialog):
@@ -750,6 +762,20 @@ class KeyboardTab(QWidget):
         self.lcd_mirror_timer.start(2000)
         self.refresh_lcd_mirror()  # don't wait 2s for the first frame
 
+    # (2026-11-10) Same pattern as CustomScreensTab: the mirror timer used to
+    # run forever, spawning the C binary every 2 s on the GUI thread even
+    # with this tab hidden -- ~43,000 renders/day for a GUI left open.
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self.lcd_mirror_timer.isActive():
+            self.lcd_mirror_timer.start(2000)
+            self.refresh_lcd_mirror()
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        if not event.spontaneous():  # a real tab switch, not just the window being minimised
+            self.lcd_mirror_timer.stop()
+
     def select_profile(self, name):
         self.current_profile = name
         self.canvas.set_active_mkey(name)
@@ -784,6 +810,9 @@ class KeyboardTab(QWidget):
         the placeholder, before the first one) rather than clearing it
         -- a missed tick shouldn't blank a screen that was fine a
         moment ago."""
+        win = self.window()
+        if not self.isVisible() or (win is not None and win.isMinimized()):
+            return
         pixmap, _bounds, err = render_preview(read_active_screen_num(), tag="canvas")
         if pixmap is not None:
             self.canvas.set_lcd_pixmap(pixmap)
@@ -1147,6 +1176,20 @@ def _parse_bounds_meta(meta_path):
     return bounds
 
 
+def _estimated_size(el):
+    """(w, h) in LCD pixels for the overflow check and "Fix overflow" --
+    one definition for both (2026-11-10). Text used to count as ONE
+    character wide, so a long text running off the right edge never
+    showed the button, and Fix overflow never pulled it back."""
+    if el.get("kind") in ("image", "visualizer"):
+        return el.get("width", 0), el.get("height", 0)
+    if el.get("kind") == "text":
+        w_ratio, h_ratio = FONT_SIZE_SCALE.get(el.get("font_size", 0), (1.0, 1.0))
+        return (max(TEXT_CHAR_PX, round(len(el.get("content", "")) * TEXT_CHAR_PX * w_ratio)),
+                round(ELEMENT_HIT_H * h_ratio))
+    return ELEMENT_HIT_W, ELEMENT_HIT_H
+
+
 def render_preview(screen_num, tag="app"):
     """Runs the same C binary that draws the real LCD, in one-shot
     --preview mode, and returns (QPixmap, bounds, err) -- the pixmap is
@@ -1163,7 +1206,13 @@ def render_preview(screen_num, tag="app"):
     both finishing fast enough not to matter."""
     if not STATS_BINARY.exists():
         return None, {}, "Not built yet -- run install.sh or rebuild the C programs."
-    out_path = Path(f"/tmp/g510_app_preview_{tag}.ppm")
+    # Private per-user dir (2026-11-10): this used to be a fixed name in
+    # world-writable /tmp, which another local user could pre-create or
+    # feed a crafted image/.meta through, and two users' GUIs shared it.
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    base = Path(runtime) if runtime and Path(runtime).is_dir() else Path(tempfile.gettempdir()) / f"g510-lcd-{os.getuid()}"
+    base.mkdir(mode=0o700, exist_ok=True)
+    out_path = base / f"g510_app_preview_{tag}.ppm"
     meta_path = Path(str(out_path) + ".meta")
     try:
         result = subprocess.run(
@@ -1192,15 +1241,12 @@ def render_preview(screen_num, tag="app"):
     except ValueError:
         return None, {}, "Malformed PPM header."
     pixels = parts[3]
-    img = QImage(w, h, QImage.Format_RGB888)
     if len(pixels) < w * h * 3:
         return None, {}, "Truncated PPM data."
-    for y in range(h):
-        row_start = y * w * 3
-        img.scanLine(y)  # ensure detach
-        for x in range(w):
-            i = row_start + x * 3
-            img.setPixel(x, y, (pixels[i] << 16) | (pixels[i + 1] << 8) | pixels[i + 2])
+    # One call instead of a per-pixel setPixel() loop (6,880 Python calls
+    # per frame, on the GUI thread, up to ~8x/s while dragging). .copy()
+    # detaches the image from `pixels`, which goes away after this returns.
+    img = QImage(pixels[:w * h * 3], w, h, 3 * w, QImage.Format_RGB888).copy()
     bounds = _parse_bounds_meta(meta_path)
     return QPixmap.fromImage(img), bounds, None
 
@@ -1834,7 +1880,7 @@ class CustomScreensTab(QWidget):
         # dragging -- so the preview visibly follows your mouse instead
         # of waiting up to a second for the next idle tick.
         self.drag_refresh_timer = QTimer(self)
-        self.drag_refresh_timer.timeout.connect(self.refresh_preview)
+        self.drag_refresh_timer.timeout.connect(self._on_drag_tick)
 
     def showEvent(self, event):
         # Real inefficiency found via direct audit (user: "figure out
@@ -2147,13 +2193,7 @@ class CustomScreensTab(QWidget):
         # back so its far edge stays on the visible 160x43 screen,
         # same rule the drag-clamp fix now enforces for new drags.
         for el in self.config[self.current_screen]:
-            if el.get("kind") in ("image", "visualizer"):
-                w, h = el.get("width", 0), el.get("height", 0)
-            elif el.get("kind") == "text":
-                _, h_ratio = FONT_SIZE_SCALE.get(el.get("font_size", 0), (1.0, 1.0))
-                w, h = TEXT_CHAR_PX, round(ELEMENT_HIT_H * h_ratio)
-            else:
-                w, h = ELEMENT_HIT_W, ELEMENT_HIT_H
+            w, h = _estimated_size(el)
             el["x"] = max(0, min(el["x"], LCD_WIDTH - w))
             el["y"] = max(0, min(el["y"], LCD_HEIGHT - h))
         save_custom_screens(self.config)
@@ -2183,13 +2223,23 @@ class CustomScreensTab(QWidget):
         # selection outline moved with the mouse, the actual rendered
         # bar/label stayed frozen until release. Real bug, reported
         # directly as the preview being "hard to control."
-        save_custom_screens(self.config)
-        self.refresh_elements_list()
+        # (2026-11-10) Batched: this fires on every mouse-move event, and
+        # used to rewrite the config AND tear down/rebuild every row of
+        # the side panel each time (the rows don't even show positions).
+        # Now it just marks the config dirty; the 120 ms drag tick saves
+        # right before it re-renders (same "preview is live" result), and
+        # on_drag_finished rebuilds the list once.
+        self._drag_dirty = True
 
     def on_element_resized(self, index, width):
         # Same idea and same fix as on_element_dragged.
-        save_custom_screens(self.config)
-        self.refresh_elements_list()
+        self._drag_dirty = True
+
+    def _on_drag_tick(self):
+        if getattr(self, "_drag_dirty", False):
+            save_custom_screens(self.config)
+            self._drag_dirty = False
+        self.refresh_preview()
 
     def on_image_resize_requested(self, index, target_w, target_h):
         # Deliberately NOT the same pattern as on_element_resized: a bar
@@ -2271,6 +2321,8 @@ class CustomScreensTab(QWidget):
     def on_drag_finished(self):
         self.drag_refresh_timer.stop()
         save_custom_screens(self.config)
+        self._drag_dirty = False
+        self.refresh_elements_list()
         self.refresh_preview()  # one final, accurate, untimed refresh
         self.preview_timer.start(1000)
 
@@ -2300,13 +2352,7 @@ class CustomScreensTab(QWidget):
         # any element's content likely extends past the visible screen.
         overflowing = False
         for el in elements:
-            if el.get("kind") in ("image", "visualizer"):
-                w, h = el.get("width", 0), el.get("height", 0)
-            elif el.get("kind") == "text":
-                _, h_ratio = FONT_SIZE_SCALE.get(el.get("font_size", 0), (1.0, 1.0))
-                w, h = TEXT_CHAR_PX, round(ELEMENT_HIT_H * h_ratio)
-            else:
-                w, h = ELEMENT_HIT_W, ELEMENT_HIT_H
+            w, h = _estimated_size(el)
             if el["x"] + w > LCD_WIDTH or el["y"] + h > LCD_HEIGHT:
                 overflowing = True
                 break
@@ -2490,7 +2536,14 @@ class MainWindow(QMainWindow):
         try:
             save_custom_screens(self.custom_tab.config)
             reloaded = load_custom_screens()
-            if reloaded != self.custom_tab.config:
+            # The file format stores spaces as "_", so a typed "_" comes back
+            # as a space -- a documented limitation (see save_custom_screens).
+            # Compare against what the format CAN hold; this used to report
+            # "Save FAILED" every time any text element contained "_".
+            expected = {scr: [dict(el, content=el["content"].replace("_", " "))
+                              if el.get("kind") == "text" else el for el in els]
+                        for scr, els in self.custom_tab.config.items()}
+            if reloaded != expected:
                 problems.append("Custom Screens: saved but didn't read back identically")
             else:
                 for screen in sorted(self.custom_tab.config.keys()):
