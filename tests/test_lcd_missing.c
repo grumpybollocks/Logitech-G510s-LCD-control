@@ -29,10 +29,17 @@ int main(void) {
     g15r_initCanvas(&canvas);
     for (int i = 0; i < 50; i++) send_frame(&canvas);                         /* missing */
     fflush(stderr); int a = count_lines(log);
-    mkdir(DEVDIR, 0755); FILE *dev = fopen(G510_LCD_DEV, "w"); if (dev) fclose(dev); /* appears */
-    for (int i = 0; i < 50; i++) send_frame(&canvas);
+    /* appears: a FIFO with a reader. send_frame() keeps its fd open across
+       frames (2026-11-10), so "gone again" must make WRITES fail the way a
+       real hidraw node does after an unplug (ENODEV) -- a regular file would
+       keep accepting writes on the open fd after being deleted. Closing the
+       reader makes the next write fail (EPIPE; SIGPIPE ignored here). */
+    signal(SIGPIPE, SIG_IGN);
+    mkdir(DEVDIR, 0755); mkfifo(G510_LCD_DEV, 0600);
+    int reader = open(G510_LCD_DEV, O_RDONLY | O_NONBLOCK);
+    for (int i = 0; i < 50; i++) send_frame(&canvas);                         /* 50 x 992 B fits the pipe */
     fflush(stderr); int b = count_lines(log);
-    unlink(G510_LCD_DEV); rmdir(DEVDIR);                                        /* gone again */
+    close(reader); unlink(G510_LCD_DEV); rmdir(DEVDIR);                         /* gone again */
     for (int i = 0; i < 50; i++) send_frame(&canvas);
     fflush(stderr); int c = count_lines(log);
     int fails = 0;
