@@ -1,7 +1,7 @@
 # Maintainer: grumpybollocks
 pkgname=g510-lcd
 pkgver=1.1
-pkgrel=1
+pkgrel=2
 pkgdesc="LCD stats screen, custom dashboards, backlight, and G-key macros for the Logitech G510s Gaming Keyboard"
 arch=('any')
 url="https://github.com/grumpybollocks/Logitech-G510s-LCD-control"
