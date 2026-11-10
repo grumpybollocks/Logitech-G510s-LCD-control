@@ -19,7 +19,14 @@
 # the udev rule never needs to know which install method was used.
 LED=/sys/class/leds/g15::kbd_backlight
 
-USER_NAME=$(loginctl list-sessions --no-legend 2>/dev/null | awk '$4=="seat0"{print $3; exit}')
+# Optional $1 = user name, for a boot-time unit that runs before anyone
+# has logged in (no seat0 session yet). Must be an existing account.
+if [ -n "${1:-}" ]; then
+    [[ "$1" =~ ^[a-z_][a-z0-9_-]*$ ]] || exit 0
+    USER_NAME=$1
+else
+    USER_NAME=$(loginctl list-sessions --no-legend 2>/dev/null | awk '$4=="seat0"{print $3; exit}')
+fi
 [ -z "$USER_NAME" ] && exit 0
 USER_HOME=$(getent passwd "$USER_NAME" | cut -d: -f6)
 [ -z "$USER_HOME" ] && exit 0
