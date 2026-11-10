@@ -1,7 +1,7 @@
 # Maintainer: grumpybollocks
 pkgname=g510-lcd
 pkgver=1.1
-pkgrel=3
+pkgrel=4
 pkgdesc="LCD stats screen, custom dashboards, backlight, and G-key macros for the Logitech G510s Gaming Keyboard"
 arch=('x86_64')   # ships compiled binaries (g510_lcd_stats, g510_lcd_buttons)
 url="https://github.com/grumpybollocks/Logitech-G510s-LCD-control"
@@ -29,6 +29,9 @@ build() {
   # in this package's own fixed /usr/lib/g510-lcd -- known and fixed
   # at build time, no per-install discovery needed the way a git-clone
   # install (install.sh) has to do it.
+  # same guard install.sh/rebuild.sh use: the loaded libg15render must have
+  # TrueType support and no stray /usr/local header may shadow it
+  scripts/g15-flags.sh --check
   gcc $(pkg-config --cflags freetype2) -DPROJECT_DIR='"/usr/lib/g510-lcd"' \
     src/g510_lcd_stats.c -o src/g510_lcd_stats \
     -lg15render $(pkg-config --libs freetype2) -lm -ldl
@@ -73,7 +76,7 @@ EOF
   # /src segment this package's own layout still has (see the layout
   # note above) -- no dangling-path bug to fix here the way G910's
   # flat layout hit, since this package never flattened it away.
-  for svc in g510-lcd-stats g510-lcd-buttons g510-macro-daemon; do
+  for svc in g510-lcd-stats g510-lcd-buttons g510-macro-daemon g510-backlight-restore; do
     install -Dm644 /dev/stdin "$pkgdir/usr/lib/systemd/user/$svc.service" < \
       <(sed "s|__PROJECT_DIR__|/usr/lib/$pkgname|g" "services/$svc.service")
   done

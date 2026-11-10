@@ -25,12 +25,20 @@ done
 # USB-ID match in udev/ must cover BOTH, or the LCD (and the hwdb remap)
 # silently die whenever the jack is pulled.
 echo "== udev_both_usb_ids"
-for f in ../udev/99-g510-lcd.rules ../udev/91-g510-stop-to-playpause.hwdb; do
-    for id in c22d c22e; do
-        if grep -qi "$id" "$f"; then echo "  ok   $id in $(basename "$f")"
-        else echo "  FAIL $id missing from $(basename "$f")"; rc=1; fi
-    done
+# Per LINE, not per file (2026-11-11): one new rule line matching only one ID
+# would otherwise still pass because another line mentions both.
+bad=$(grep -niE 'ID_MODEL_ID|idProduct|c22[de]' ../udev/99-g510-lcd.rules | grep -viE 'c22d.*c22e|c22e.*c22d' || true)
+if [ -z "$bad" ]; then echo "  ok   every USB-ID rule line in 99-g510-lcd.rules covers c22d AND c22e"
+else echo "  FAIL rule line(s) matching only one G510 USB ID:"; echo "$bad" | sed 's/^/       /'; rc=1; fi
+# hwdb: each C22D match line needs a C22E twin with the same suffix, and vice versa
+hw=../udev/91-g510-stop-to-playpause.hwdb
+hwbad=""
+for m in $(grep -oiE '^evdev:input:b0003v046DpC22[DE][^ ]*' "$hw"); do
+    twin=$(echo "$m" | sed -E 's/(pC22)D/\1@/I; s/(pC22)E/\1D/I; s/(pC22)@/\1E/')
+    grep -qiF "$twin" "$hw" || hwbad="$hwbad $m"
 done
+if [ -z "$hwbad" ] && grep -qiE 'pC22D' "$hw" && grep -qiE 'pC22E' "$hw"; then echo "  ok   every hwdb match exists for both c22d and c22e"
+else echo "  FAIL hwdb match without its twin:$hwbad"; rc=1; fi
 if command -v udevadm >/dev/null && udevadm verify --help >/dev/null 2>&1; then
     udevadm verify ../udev/99-g510-lcd.rules >/dev/null 2>&1 \
         && echo "  ok   udevadm verify" || { echo "  FAIL udevadm verify"; rc=1; }
@@ -39,6 +47,11 @@ echo
 
 echo "== test_buttons_reconnect"
 ./test_buttons_reconnect.sh | sed 's/^/  /'
+[ "${PIPESTATUS[0]}" -eq 0 ] || rc=1
+echo
+
+echo "== test_restore_backlight"
+./test_restore_backlight.sh | sed 's/^/  /'
 [ "${PIPESTATUS[0]}" -eq 0 ] || rc=1
 echo
 
