@@ -121,8 +121,11 @@
    44100 * 2 * 300 = ~26.5 MB of RAM. */
 #define VIZ_RESTART_SEC 300
 
-static pid_t g_viz_pid = -1;
+static volatile pid_t g_viz_pid = -1;  /* read by the signal handler */
 static time_t g_viz_started = 0;
+static int g_viz_owns_file = 0;        /* only the process that started parec may delete its file */
+static time_t g_viz_retry_after = 0;   /* backoff after parec died or fork() failed */
+#define VIZ_RETRY_SEC 5
 static long g_viz_read_offset = 0;
 static short g_viz_ring[VIZ_WINDOW_SAMPLES];
 static double g_viz_bars[VIZ_NUM_BARS] = {0};
@@ -185,6 +188,7 @@ static const char *viz_capture_path(void) {
 static void viz_start_capture(void) {
     viz_init_bar_freqs();
     unlink(viz_capture_path());
+    g_viz_owns_file = 1;
     g_viz_read_offset = 0;
     pid_t parent = getpid();
     pid_t pid = fork();
@@ -218,46 +222,72 @@ static void viz_start_capture(void) {
                "--latency-msec=50", viz_capture_path(), (char*)NULL);
         _exit(127); /* only reached if execlp itself failed */
     }
-    g_viz_pid = pid; /* pid == -1 on a failed fork() -- update_visualizer()'s pid<=0 check handles that */
+    g_viz_pid = pid;
     g_viz_started = time(NULL);
+    if (pid < 0) g_viz_retry_after = g_viz_started + VIZ_RETRY_SEC; /* fork failed: don't retry every frame */
 }
 
+/* Stops parec without ever blocking forever: SIGTERM, up to 500 ms for
+   it to exit, then SIGKILL (a parec stuck connecting to a wedged
+   PipeWire used to hang this process here). SIGTERM/SIGINT are blocked
+   meanwhile so the handler can't kill() a PID this has just reaped (and
+   the kernel may already have reused). */
 static void viz_stop_capture(void) {
-    if (g_viz_pid > 0) {
-        kill(g_viz_pid, SIGTERM);
-        waitpid(g_viz_pid, NULL, 0);
+    sigset_t block, old;
+    sigemptyset(&block);
+    sigaddset(&block, SIGTERM);
+    sigaddset(&block, SIGINT);
+    sigprocmask(SIG_BLOCK, &block, &old);
+    pid_t pid = g_viz_pid;
+    if (pid > 0) {
+        kill(pid, SIGTERM);
+        int reaped = 0;
+        for (int i = 0; i < 50 && !reaped; i++) {
+            if (waitpid(pid, NULL, WNOHANG) != 0) reaped = 1;  /* exited, or not our child any more */
+            else usleep(10000);
+        }
+        if (!reaped) { kill(pid, SIGKILL); waitpid(pid, NULL, 0); }
         g_viz_pid = -1;
     }
-    unlink(viz_capture_path());
+    /* Only delete the capture file if THIS process created it: one-shot
+       --preview/--sensors runs used to delete the live service's file on
+       Ctrl-C, leaving the LCD visualizer flat for up to VIZ_RESTART_SEC. */
+    if (g_viz_owns_file) { unlink(viz_capture_path()); g_viz_owns_file = 0; }
+    sigprocmask(SIG_SETMASK, &old, NULL);
 }
 
-/* Real resource-leak bug found while testing the periodic-restart
-   logic: without this, killing the daemon (systemctl restart, a
-   crash, anything sending SIGTERM/SIGINT) left the forked parec child
-   running forever as an orphan -- confirmed directly, multiple
-   restarts during testing accumulated multiple leaked parec
-   processes. main() must call signal(SIGTERM/SIGINT,
-   viz_signal_cleanup) once at startup. */
+/* SIGTERM/SIGINT: without this, killing the daemon left the forked
+   parec running forever (PR_SET_PDEATHSIG in the child is the backstop
+   for SIGKILL/crashes). Only async-signal-safe calls here -- kill() and
+   unlink(), no waiting: parec gets SIGTERM and is reaped by whoever
+   inherits it. main() installs this only for the live LCD loop. */
 static void viz_signal_cleanup(int sig) {
-    viz_stop_capture();
+    pid_t pid = g_viz_pid;
+    if (pid > 0) kill(pid, SIGTERM);
+    if (g_viz_owns_file) unlink(viz_capture_path());
     signal(sig, SIG_DFL);
     raise(sig);
 }
 
-/* Single-bin DFT magnitude via direct correlation against one target
-   frequency -- cheap since only VIZ_NUM_BARS specific bins are ever
-   needed (~512*20 = 10240 multiply-adds per update, negligible even
-   at the ~10fps this now runs at for visualizer-showing screens), not
-   the O(N log N) full spectrum a real FFT would compute for bins
-   nothing ever reads. */
+/* Magnitude of one DFT bin at freq_hz (only VIZ_NUM_BARS specific
+   bins are ever needed, so no full FFT). Goertzel recurrence: the same
+   |sum s[i] * e^(-j*omega*i)| the direct correlation computed, but one
+   multiply-add per sample instead of a cos() + sin() per sample -- that
+   was ~32k trig calls per frame (32 bars x 512 samples x 2), ~650k/s on
+   a 20 fps visualizer screen. Verified equal to the direct sum by
+   tests/test_visualizer.c. */
 static double viz_dft_bin_magnitude(short *samples, int n, double freq_hz) {
     double omega = 2.0 * M_PI * freq_hz / VIZ_SAMPLE_RATE;
-    double real = 0, imag = 0;
+    double coeff = 2.0 * cos(omega);
+    double s1 = 0, s2 = 0;
     for (int i = 0; i < n; i++) {
-        double s = samples[i] / 32768.0;
-        real += s * cos(omega * i);
-        imag -= s * sin(omega * i);
+        double s0 = samples[i] / 32768.0 + coeff * s1 - s2;
+        s2 = s1;
+        s1 = s0;
     }
+    /* X = e^(-j*omega*(n-1)) * (s1 - s2*e^(-j*omega)); the phase factor doesn't change |X| */
+    double real = s1 - s2 * cos(omega);
+    double imag = s2 * sin(omega);
     return sqrt(real * real + imag * imag) / n;
 }
 
@@ -271,8 +301,16 @@ static double viz_dft_bin_magnitude(short *samples, int n, double freq_hz) {
    behavior, not an error), bars decay toward zero instead of freezing
    or showing stale data forever. */
 static void update_visualizer(void) {
+    /* parec exited on its own (PipeWire restart, parec missing -> exec
+       failed)? Reap it now instead of leaving a zombie and flat bars
+       until the next VIZ_RESTART_SEC restart, and retry after a pause. */
+    if (g_viz_pid > 0 && waitpid(g_viz_pid, NULL, WNOHANG) == g_viz_pid) {
+        g_viz_pid = -1;
+        g_viz_retry_after = time(NULL) + VIZ_RETRY_SEC;
+    }
     if (g_viz_pid <= 0) {
-        viz_start_capture();
+        if (time(NULL) >= g_viz_retry_after) viz_start_capture();
+        for (int i = 0; i < VIZ_NUM_BARS; i++) g_viz_bars[i] *= 0.85;
         return;
     }
     if (difftime(time(NULL), g_viz_started) >= VIZ_RESTART_SEC) {

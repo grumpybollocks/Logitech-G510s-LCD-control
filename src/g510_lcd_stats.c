@@ -23,6 +23,10 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include <dlfcn.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <poll.h>
+#include <sys/inotify.h>
 
 /* LCD device node (stable udev symlink). Overridable ONLY at build time,
    so tests can exercise the "device missing" path without unplugging
@@ -83,22 +87,35 @@ static void send_frame(g15canvas *canvas) {
 
     /* Stable symlink from the udev rule (99-g510-lcd.rules) -- the raw
        hidraw number can shift across reboots/replugs, this doesn't. */
-    FILE *f = fopen(G510_LCD_DEV, "wb");
-    /* Log the device going away / coming back ONCE each (2026-11-02
-       audit). This used to perror() on every frame: with the keyboard
-       unplugged or mid USB reset that is 20 journal lines/second on a
-       visualizer screen (72,000/hour), all written to the SSD. Not seen
-       in this machine's journal (back to 2026-10-07), so latent, but a
-       single replug would have triggered it. */
+    /* (2026-11-10) The node is kept open across frames (it was
+       opened + closed 20x/s on visualizer screens) and written with a
+       checked write(): the old fwrite() always "succeeded" into stdio's
+       buffer and the real write happened inside an unchecked fclose(),
+       so errors and short writes were never seen. Any write error
+       (ENODEV after an unplug, the jack re-enumerating the keyboard)
+       closes it, and the next frame reopens whatever the link now
+       points to. */
+    static int fd = -1;
     static int lcd_missing = 0;
-    if (!f) {
-        if (!lcd_missing) { perror("open " G510_LCD_DEV " (will retry silently every frame)"); lcd_missing = 1; }
-        return;
+    if (fd < 0) {
+        fd = open(G510_LCD_DEV, O_WRONLY | O_CLOEXEC);
+        if (fd < 0) {
+            if (!lcd_missing) { perror("open " G510_LCD_DEV " (will retry silently every frame)"); lcd_missing = 1; }
+            return;
+        }
+        if (lcd_missing) { fprintf(stderr, "g510-lcd-stats: " G510_LCD_DEV " is back\n"); lcd_missing = 0; }
     }
-    if (lcd_missing) { fprintf(stderr, "g510-lcd-stats: " G510_LCD_DEV " is back\n"); lcd_missing = 0; }
-    size_t written = fwrite(report, 1, 992, f);
-    if (written != 992) fprintf(stderr, "g510-lcd-stats: short write to " G510_LCD_DEV " (%zu/992 bytes)\n", written);
-    fclose(f);
+    ssize_t written = write(fd, report, sizeof(report));
+    if (written != (ssize_t)sizeof(report)) {
+        if (written < 0 && !lcd_missing) {
+            fprintf(stderr, "g510-lcd-stats: write to " G510_LCD_DEV " failed: %s (reopening)\n", strerror(errno));
+            lcd_missing = 1;
+        } else if (written >= 0) {
+            fprintf(stderr, "g510-lcd-stats: short write to " G510_LCD_DEV " (%zd/%zu bytes)\n", written, sizeof(report));
+        }
+        close(fd);
+        fd = -1;
+    }
 }
 
 /* Renders the canvas to a plain PPM image instead of the real hardware --
@@ -137,7 +154,7 @@ static void write_ppm(g15canvas *c, const char *path) {
 
 /* --- stat readers --- */
 
-static void read_cpu_totals(unsigned long long *idle, unsigned long long *total) {
+static int read_cpu_totals(unsigned long long *idle, unsigned long long *total) {
     FILE *f = fopen("/proc/stat", "r");
     /* Real bug found by full-file audit: every OTHER stat reader in
        this file (get_cpu_temp_c, get_vram_bytes, get_swap_percent,
@@ -147,13 +164,14 @@ static void read_cpu_totals(unsigned long long *idle, unsigned long long *total)
        real SIGSEGV, not just a theoretical gap, and this is on the
        DEFAULT stats screen's hot path (draw_stats_screen calls both
        every redraw), not an obscure corner case. */
-    if (!f) { *idle = 0; *total = 0; return; }
-    unsigned long long user, nice, sys, idl, iowait, irq, softirq, steal;
-    fscanf(f, "cpu %llu %llu %llu %llu %llu %llu %llu %llu",
+    if (!f) { *idle = 0; *total = 0; return 0; }
+    unsigned long long user = 0, nice = 0, sys = 0, idl = 0, iowait = 0, irq = 0, softirq = 0, steal = 0;
+    int n = fscanf(f, "cpu %llu %llu %llu %llu %llu %llu %llu %llu",
            &user, &nice, &sys, &idl, &iowait, &irq, &softirq, &steal);
     fclose(f);
     *idle = idl + iowait;
     *total = user + nice + sys + idl + iowait + irq + softirq + steal;
+    return n == 8;
 }
 
 /* Computed exactly once per frame (same reasoning/pattern as
@@ -168,7 +186,9 @@ static double g_cpu_pct = 0.0;
 static void update_cpu_percent(void) {
     static unsigned long long prev_idle = 0, prev_total = 0;
     unsigned long long idle, total;
-    read_cpu_totals(&idle, &total);
+    /* a failed/short read used to return 0/0, and the unsigned deltas
+       below then wrapped to ~2^64 -> garbage CPU% now and on recovery */
+    if (!read_cpu_totals(&idle, &total) || total < prev_total || idle < prev_idle) return;
     unsigned long long dt = total - prev_total;
     unsigned long long di = idle - prev_idle;
     g_cpu_pct = (dt > 0) ? (100.0 * (double)(dt - di) / (double)dt) : 0.0;
@@ -438,8 +458,29 @@ static int nvml_ready(void) {
     return 1;
 }
 
+/* Any NVIDIA PCI device runtime-suspended (hybrid laptop dGPU asleep)?
+   Checked before EVERY NVML call -- nvmlInit and its queries wake the
+   GPU, and the rescan used to call nvml_poll() before any power check. */
+static int nvidia_pci_suspended(void) {
+    char root[288];
+    snprintf(root, sizeof(root), "%s/bus/pci/drivers/nvidia", g_sysfs);
+    DIR *d = opendir(root);
+    if (!d) return 0;
+    struct dirent *e;
+    int asleep = 0;
+    while (!asleep && (e = readdir(d))) {
+        if (!strchr(e->d_name, ':')) continue;          /* PCI addresses look like 0000:01:00.0 */
+        char p[352], st[24];
+        if (snprintf(p, sizeof(p), "%s/%s/power/runtime_status", root, e->d_name) >= (int)sizeof(p)) continue;
+        asleep = read_sysfs_word(p, st, sizeof(st)) && strcmp(st, "suspended") == 0;
+    }
+    closedir(d);
+    return asleep;
+}
+
 /* one NVML read per second at most, shared by every NVIDIA value */
 static int nvml_poll(void) {
+    if (nvidia_pci_suspended()) return 0;
     if (!nvml_ready()) return 0;
     time_t now = time(NULL);
     if (g_nvml.polled == now) return 1;
@@ -550,7 +591,7 @@ static const gpu_lookup_t *gpu_get(void) {
 
 /* A runtime-suspended GPU (hybrid laptops) is left asleep: no reading. */
 static int gpu_awake(const gpu_lookup_t *g) {
-    if (!g->dev[0]) return 1;
+    if (!g->dev[0]) return !nvidia_pci_suspended();     /* NVML without a DRM card */
     char p[352], s[24];
     snprintf(p, sizeof(p), "%s/power/runtime_status", g->dev);
     return !(read_sysfs_word(p, s, sizeof(s)) && strcmp(s, "suspended") == 0);
@@ -730,15 +771,24 @@ static void update_net_speed(void) {
     unsigned long long rx = 0, tx = 0;
     FILE *f = fopen("/proc/net/dev", "r");
     if (f) {
+        /* Sum every PHYSICAL interface (one with a real device behind it
+           in /sys/class/net/<if>/device) -- this used to read only
+           "wlp4s0", this machine's Wi-Fi, so on any other PC or over
+           Ethernet NET_DOWN/NET_UP were silently always 0. Skips lo, VM
+           bridges/veths and VPN tunnels (tun/wg), whose traffic would
+           otherwise be counted twice. */
         char line[512];
         while (fgets(line, sizeof(line), f)) {
-            char *iface = strstr(line, "wlp4s0:");
-            if (iface) {
-                unsigned long long r, t;
-                sscanf(iface + 7, "%llu %*u %*u %*u %*u %*u %*u %*u %llu", &r, &t);
-                rx = r; tx = t;
-                break;
-            }
+            char *colon = strchr(line, ':');
+            if (!colon) continue;                     /* the two header lines */
+            char *name = line;
+            while (*name == ' ') name++;
+            *colon = 0;
+            char dev[300];
+            if (snprintf(dev, sizeof(dev), "/sys/class/net/%s/device", name) >= (int)sizeof(dev)) continue;
+            if (access(dev, F_OK) != 0) continue;
+            unsigned long long r, t;
+            if (sscanf(colon + 1, "%llu %*u %*u %*u %*u %*u %*u %*u %llu", &r, &t) == 2) { rx += r; tx += t; }
         }
         fclose(f);
     }
@@ -864,7 +914,7 @@ static void update_media_info(void) {
     char title_buf[64] = "", artist_buf[48] = "";
     long pos_us = -1, len_us = -1;
     int have_title = 0, have_time = 0;
-    char line[256];
+    char line[2048]; /* was 256: a long (often non-Latin, multi-byte) title split the line and BOTH halves were dropped */
     while (fgets(line, sizeof(line), p)) {
         char *nl = strchr(line, '\n');
         if (nl) *nl = 0;
@@ -1191,16 +1241,33 @@ static void draw_label(g15canvas *c, int x, int y, const char *label) {
    render-and-scan technique already used elsewhere in this project
    (the clock face's roman-numeral positions), not a new invented
    hack. */
+/* (2026-11-10) Same result, a fraction of the cost: this runs several
+   times per element per frame (and once per character while
+   truncating), and used to set up a whole new canvas each time --
+   g15r_initCanvas() starts a FreeType library -- then call
+   g15r_getPixel() on all 6,880 pixels. Now one scratch canvas is
+   initialised once and only its pixel buffer is cleared, and the scan
+   reads the packed buffer (row-major, 20 bytes per 160-px row, bit 7 =
+   leftmost pixel -- the same layout dump_to_lcd_format() reads) from
+   the right, stopping at the first column byte with anything lit. */
 static int measure_builtin_text_width(const char *s, int font_size) {
     if (!s[0]) return 0;
-    g15canvas scratch G15_CANVAS_AUTO = {0};
-    g15r_initCanvas(&scratch);
+    static g15canvas scratch;          /* deliberately never freed: one per process */
+    static int ready = 0;
+    if (!ready) { g15r_initCanvas(&scratch); ready = 1; }
+    memset(scratch.buffer, 0, sizeof(scratch.buffer));
     g15r_renderString(&scratch, (unsigned char*)s, 0, font_size, 0, 0);
-    int max_x = -1;
-    for (int y = 0; y < G15_LCD_HEIGHT; y++)
-        for (int x = 0; x < G15_LCD_WIDTH; x++)
-            if (g15r_getPixel(&scratch, x, y) && x > max_x) max_x = x;
-    return max_x + 1; /* -1 (nothing lit) + 1 = 0, correct for an all-blank string */
+    const int row_bytes = G15_LCD_WIDTH / 8;
+    for (int b = row_bytes - 1; b >= 0; b--) {
+        unsigned char col = 0;
+        for (int y = 0; y < G15_LCD_HEIGHT; y++) col |= scratch.buffer[y * row_bytes + b];
+        if (col) {
+            int bit = 0;                  /* lowest set bit = rightmost lit pixel in this byte */
+            while (!(col & (1u << bit))) bit++;
+            return b * 8 + (7 - bit) + 1;
+        }
+    }
+    return 0;
 }
 
 /* Truncates `s` in place (a single trailing '.' marks a real cut, not
@@ -1679,18 +1746,25 @@ static void load_custom_screens(void) {
        but would have shown as ghost/duplicate text on the real keyboard
        the moment text elements were actually used without a service
        restart in between. */
-    static time_t last_mtime = 0;
+    /* (2026-11-10) Compare the full nanosecond mtime + inode + size, not
+       whole seconds: the GUI saves on every mouse-move of a drag, so the
+       final save often landed in the same second as a mid-drag one and
+       was never loaded -- the LCD kept an in-between position. */
+    static struct timespec last_mtime;
+    static ino_t last_ino;
+    static off_t last_size;
     static int have_last_mtime = 0;
     struct stat st;
     int stat_ok = (stat(custom_screens_path(), &st) == 0);
-    if (stat_ok && have_last_mtime && st.st_mtime == last_mtime) {
+    if (stat_ok && have_last_mtime && st.st_mtim.tv_sec == last_mtime.tv_sec &&
+        st.st_mtim.tv_nsec == last_mtime.tv_nsec && st.st_ino == last_ino && st.st_size == last_size) {
         /* Unchanged since the last parse -- draw_custom_screen() calls this
            every frame (up to ~20fps with a visualizer on screen), so skip
            the fopen+full re-parse on every one of those when the GUI
            hasn't actually edited the file since last time. */
         return;
     }
-    if (stat_ok) { last_mtime = st.st_mtime; have_last_mtime = 1; }
+    if (stat_ok) { last_mtime = st.st_mtim; last_ino = st.st_ino; last_size = st.st_size; have_last_mtime = 1; }
     else have_last_mtime = 0; /* missing/unreadable -- always retry next call too */
     for (int i = 0; i < MAX_CUSTOM_SCREENS; i++) {
         custom_screens[i].count = 0;
@@ -1889,11 +1963,16 @@ static void draw_element(g15canvas *c, element_t *el) {
        since it has no width-query API -- see
        measure_builtin_text_width()) before either draw path below
        ever renders it, so nothing this function draws can overflow. */
-    int avail = G15_LCD_WIDTH - TEXT_EDGE_MARGIN - value_x;
-    truncate_builtin_text(disp, el->font_size, avail);
-    int value_w = measure_builtin_text_width(disp, el->font_size);
-
-    if (def->auto_center) {
+    int value_w;
+    if (!def->auto_center) {
+        int avail = G15_LCD_WIDTH - TEXT_EDGE_MARGIN - value_x;
+        truncate_builtin_text(disp, el->font_size, avail);
+        value_w = measure_builtin_text_width(disp, el->font_size);
+    } else {
+        /* (2026-11-10) centred values skip the x-anchored cut above: it
+           used to run first, so a title dragged to x=100 was cut to ~10
+           characters before the full-width centred budget below ever
+           saw it, though the whole title would have fit centred. */
         /* Truncate against the FULL centered budget (not the
            x-anchored one above -- a centered string can use space on
            BOTH sides of the configured x, so re-measure/re-truncate
@@ -1970,20 +2049,59 @@ static void write_bounds_meta(const char *outpath) {
    before this was wired into the real custom-screen system. Silently
    does nothing if the file can't be read (e.g. it was deleted by hand)
    rather than crashing the whole screen over one missing image. */
+/* (2026-11-10) Cached: this ran fopen + malloc + fread + free for every
+   image on every frame (20 fps on a visualizer screen). Now one stat()
+   per frame, re-read only when the file's mtime/inode/size or the
+   configured size changes. And a file whose size isn't exactly
+   width x height for the CURRENT config is not drawn: while the GUI
+   resizes an image, the .bin can briefly hold the NEW dimensions while
+   custom_screens.txt still says the old ones, and drawing it with the
+   old row stride showed a scrambled image. */
+#define IMG_CACHE_SLOTS (MAX_IMAGES * MAX_CUSTOM_SCREENS)
+typedef struct {
+    char path[300];
+    int width, height;
+    struct timespec mtime;
+    ino_t ino;
+    off_t size;
+    unsigned char *data;
+} img_cache_t;
+static img_cache_t g_img_cache[IMG_CACHE_SLOTS];
+static int g_img_cache_next = 0;
+
 static void draw_image_element(g15canvas *c, image_t *im) {
     char full_path[300];
     snprintf(full_path, sizeof(full_path), "%s/%s", data_dir(), im->path);
-    FILE *f = fopen(full_path, "rb");
-    if (!f) return;
+    if (im->width <= 0 || im->height <= 0) return;
     long expected = (long)((im->width + 7) / 8) * im->height;
-    unsigned char *data = malloc(expected);
-    if (!data) { fclose(f); return; }
-    size_t got = fread(data, 1, expected, f);
-    fclose(f);
-    if ((long)got == expected) {
-        g15r_drawXBM(c, data, im->width, im->height, im->x, im->y);
+    struct stat st;
+    if (stat(full_path, &st) != 0 || st.st_size != expected) return;
+
+    img_cache_t *e = NULL;
+    for (int i = 0; i < IMG_CACHE_SLOTS; i++)
+        if (g_img_cache[i].data && strcmp(g_img_cache[i].path, full_path) == 0) { e = &g_img_cache[i]; break; }
+    int fresh = e && e->width == im->width && e->height == im->height && e->ino == st.st_ino &&
+                e->size == st.st_size && e->mtime.tv_sec == st.st_mtim.tv_sec &&
+                e->mtime.tv_nsec == st.st_mtim.tv_nsec;
+    if (!fresh) {
+        if (!e) {                          /* take a free slot, else recycle round-robin */
+            for (int i = 0; i < IMG_CACHE_SLOTS && !e; i++) if (!g_img_cache[i].data) e = &g_img_cache[i];
+            if (!e) { e = &g_img_cache[g_img_cache_next]; g_img_cache_next = (g_img_cache_next + 1) % IMG_CACHE_SLOTS; }
+        }
+        free(e->data);
+        e->data = NULL;
+        FILE *f = fopen(full_path, "rb");
+        if (!f) return;
+        unsigned char *data = malloc(expected);
+        size_t got = data ? fread(data, 1, expected, f) : 0;
+        fclose(f);
+        if ((long)got != expected) { free(data); return; }
+        snprintf(e->path, sizeof(e->path), "%s", full_path);
+        e->width = im->width; e->height = im->height;
+        e->mtime = st.st_mtim; e->ino = st.st_ino; e->size = st.st_size;
+        e->data = data;
     }
-    free(data);
+    g15r_drawXBM(c, e->data, im->width, im->height, im->x, im->y);
 }
 
 static void draw_text_element(g15canvas *c, text_t *tx) {
@@ -2116,13 +2234,83 @@ static void draw_custom_screen(g15canvas *c, int screen_num) {
     for (int i = 0; i < cs->visualizer_count; i++) draw_visualizer_element(c, &cs->visualizers[i]);
 }
 
+/* Does custom screen `screen` (2-5) show any sensor starting with `prefix`? */
+static int screen_uses(int screen, const char *prefix) {
+    if (screen < 2 || screen > 5) return 0;
+    custom_screen_t *cs = &custom_screens[screen - 2];
+    size_t n = strlen(prefix);
+    for (int i = 0; i < cs->count; i++)
+        if (strncmp(cs->elements[i].sensor, prefix, n) == 0) return 1;
+    return 0;
+}
+
+/* (2026-11-10) Wake the main loop as soon as an L-button press changes
+   the screen-state file, instead of only after the fixed sleep -- an
+   L2 press on the stats screen used to take up to 2 s to show. inotify
+   on the runtime dir (the buttons listener rewrites the file with
+   fopen "w", i.e. IN_CLOSE_WRITE; filtered by name). Without inotify
+   it degrades to the plain sleep it replaces. */
+static int g_screen_ifd = -1;
+
+static void screen_watch_init(void) {
+    char dir[256];
+    snprintf(dir, sizeof(dir), "%s", screen_state_path());
+    char *slash = strrchr(dir, '/');
+    if (!slash) return;
+    *slash = 0;
+    g_screen_ifd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+    if (g_screen_ifd >= 0 && inotify_add_watch(g_screen_ifd, dir, IN_CLOSE_WRITE | IN_MOVED_TO) < 0) {
+        close(g_screen_ifd);
+        g_screen_ifd = -1;
+    }
+}
+
+static long ms_until(const struct timespec *end) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (end->tv_sec - now.tv_sec) * 1000 + (end->tv_nsec - now.tv_nsec) / 1000000;
+}
+
+/* Sleep up to `ms`; return early if the screen-state file was rewritten. */
+static void sleep_or_screen_change(long ms) {
+    if (g_screen_ifd < 0) { usleep((useconds_t)ms * 1000); return; }
+    struct timespec end;
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    end.tv_sec += ms / 1000;
+    end.tv_nsec += (ms % 1000) * 1000000L;
+    if (end.tv_nsec >= 1000000000L) { end.tv_sec++; end.tv_nsec -= 1000000000L; }
+    const char *want = strrchr(screen_state_path(), '/') + 1;
+    for (;;) {
+        long left = ms_until(&end);
+        if (left <= 0) return;
+        struct pollfd pfd = {g_screen_ifd, POLLIN, 0};
+        if (poll(&pfd, 1, (int)left) <= 0) continue;      /* timeout (loop ends) or EINTR */
+        char buf[4096] __attribute__((aligned(__alignof__(struct inotify_event))));
+        ssize_t len;
+        int hit = 0;
+        while ((len = read(g_screen_ifd, buf, sizeof(buf))) > 0)
+            for (char *q = buf; q < buf + len; ) {
+                struct inotify_event *ev = (struct inotify_event *)q;
+                if (ev->len && strcmp(ev->name, want) == 0) hit = 1;
+                q += sizeof(struct inotify_event) + ev->len;
+            }
+        if (hit) return;
+    }
+}
+
+/* ms until the next wall-clock second, so the clock screen ticks on the
+   second instead of drifting (a plain sleep(1) + draw time occasionally
+   skipped a displayed second). */
+static long ms_to_next_second(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_REALTIME, &now);
+    return 1000 - now.tv_nsec / 1000000 + 5;
+}
+
 int main(int argc, char **argv) {
     /* Clean up the visualizer's forked parec child on shutdown --
        real leak found in testing: without this, every service
        restart orphaned a parec process forever. */
-    signal(SIGTERM, viz_signal_cleanup);
-    signal(SIGINT, viz_signal_cleanup);
-
     /* `--sensors`: print what was detected on this machine and exit
        (no LCD, no fonts) -- the first thing to run on new hardware. */
     if (argc >= 2 && strcmp(argv[1], "--sensors") == 0) {
@@ -2176,9 +2364,19 @@ int main(int argc, char **argv) {
         const char *outpath = argc >= 4 ? argv[3] : "/tmp/g510_preview.ppm";
         g15canvas canvas G15_CANVAS_AUTO = {0};
         g15r_initCanvas(&canvas);
+        /* (2026-11-10) The GUI runs this every 0.12-2 s. playerctl used
+           to be spawned on EVERY preview (every screen), and CPU% came
+           from a single sample = the average since boot, not the load
+           the LCD shows. Now media only when this screen shows it, and
+           CPU% from two samples 50 ms apart only when it's displayed. */
+        load_custom_screens();
+        if (screen == 0 || screen_uses(screen, "CPU_PCT")) {
+            update_cpu_percent();
+            usleep(50000);
+        }
         update_cpu_percent();
         update_net_speed();
-        update_media_info();
+        if (screen_uses(screen, "MEDIA_")) update_media_info();
         viz_set_preview_placeholder();
         if (screen == 1) draw_clock_screen(&canvas);
         else if (screen >= 2 && screen <= 5) {
@@ -2189,9 +2387,20 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    /* Live LCD loop only (2026-11-10): installed after the one-shot
+       --sensors/--preview modes return, so Ctrl-C on those can no longer
+       delete the live service's audio capture file. */
+    signal(SIGTERM, viz_signal_cleanup);
+    signal(SIGINT, viz_signal_cleanup);
+    screen_watch_init();
+
+    /* One canvas for the whole run, cleared each frame: g15r_initCanvas()
+       starts a FreeType library, and this loop runs up to 20x/s. */
+    g15canvas canvas G15_CANVAS_AUTO = {0};
+    g15r_initCanvas(&canvas);
+
     while (1) {
-        g15canvas canvas G15_CANVAS_AUTO = {0};
-        g15r_initCanvas(&canvas);
+        g15r_clearScreen(&canvas, G15_COLOR_WHITE);
 
         /* Direct report after actually watching it live: "i can only
            see 4 max 5 line and barely moves" -- root cause: this whole
@@ -2235,6 +2444,9 @@ int main(int argc, char **argv) {
         if (difftime(now_t, last_slow_update) >= 1.0) {
             update_cpu_percent();
             update_net_speed();
+            /* MAXTEMP used to update only while the stats screen was shown */
+            int t = get_cpu_temp_c();
+            if (t > max_temp_seen) max_temp_seen = t;
             if (need_media) update_media_info();
             last_slow_update = now_t;
         }
@@ -2244,7 +2456,7 @@ int main(int argc, char **argv) {
         if (screen == 1) {
             draw_clock_screen(&canvas);
             send_frame(&canvas);
-            sleep(1);
+            sleep_or_screen_change(ms_to_next_second());
             continue;
         }
         if (screen >= 2 && screen <= 5) {
@@ -2264,16 +2476,16 @@ int main(int argc, char **argv) {
                    cadence becomes the next-largest source of lag, so
                    it's doubled too. 20fps is still cheap for a tiny
                    160x43 monochrome frame over USB. */
-                usleep(50000); /* ~20fps */
+                usleep(50000); /* ~20fps -- a screen change is picked up next frame anyway */
             } else {
-                sleep(1);
+                sleep_or_screen_change(1000);
             }
             continue;
         }
 
         draw_stats_screen(&canvas);
         send_frame(&canvas);
-        sleep(2);
+        sleep_or_screen_change(2000);
     }
     return 0;
 }
