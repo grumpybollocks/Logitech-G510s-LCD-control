@@ -1,17 +1,32 @@
-# Logitech G510s software
+# Logitech G510s for Linux
 
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
-![Python](https://img.shields.io/badge/python-3-blue.svg)
 ![Platform: Arch Linux](https://img.shields.io/badge/platform-Arch%20Linux-1793d1.svg)
-![G510s: work in progress](https://img.shields.io/badge/G510s-work%20in%20progress-orange.svg)
+![Languages: C + Python](https://img.shields.io/badge/code-C%20%2B%20Python%203-informational.svg)
 
-**A from-scratch Linux driver + GUI for the Logitech G510s** — the LCD
-screen, backlight, and G-key macros, properly working. Logitech's own
-software is Windows-only and everything else out there is old,
-abandoned, or half-broken, so this talks to the keyboard's real
-USB/HID traffic directly instead.
+**The LCD screen, RGB backlight and G-key macros of the Logitech G510 /
+G510s, properly working on Linux.** Logitech's own software is
+Windows-only and everything else out there is old, abandoned or
+half-broken, so this talks to the keyboard directly.
 
-## Download & Install
+![G510s Control app](docs/screenshots/g510s-control-v1.png)
+
+## What you get
+
+- **Live stats on the LCD** — CPU, RAM, VRAM and temperature, plus an
+  analog clock on L1.
+- **Custom screens** — drag sensors, images, text and a visualizer onto
+  L2–L5 in a live editor that shows exactly what the LCD will.
+- **A little Winamp on your keyboard** — equalizer bars for whatever's
+  playing, plus the song title, artist and elapsed time.
+- **RGB backlight** colour and brightness, restored on every boot and
+  replug.
+- **G-key macros** (G1–G18) on three profiles (M1/M2/M3): recorded
+  keystrokes or shell commands.
+- **Runs as your normal user** as three small background services,
+  starts at login, and survives unplugging the keyboard or its headset.
+
+## Install
 
 ```
 git clone https://github.com/grumpybollocks/Logitech-G510s-LCD-control.git
@@ -19,82 +34,48 @@ cd Logitech-G510s-LCD-control
 ./install.sh
 ```
 
-`install.sh` sorts out every dependency (reporting exactly what's
-already installed vs. what it's about to add — never a silent
-black-box `pacman` run), builds the LCD driver, converts the label
-font, wires up the systemd services, and adds desktop shortcuts. Safe
-to re-run any time. You'll be asked for your `sudo` password once (for
-the udev rules and package installs), and to unplug/replug the
-keyboard partway through so those rules actually take effect.
+The installer shows what's already installed and what it will add
+before touching anything, builds the LCD programs, converts the label
+fonts, sets up the udev rules and services, and adds desktop
+shortcuts. It asks for your `sudo` password once, and for one
+unplug/replug of the keyboard so the new rules take effect. Safe to
+re-run any time.
+
+**Check it worked:**
+
+```
+systemctl --user status g510-lcd-stats g510-lcd-buttons g510-macro-daemon
+```
+
+All three should say `active (running)`. If the LCD stays blank,
+unplug and replug the keyboard once.
 
 ### What your PC needs
 
-- **An Arch-based Linux** — Arch, Manjaro, EndeavourOS, Garuda and the
-  like. `install.sh` uses `pacman` plus an AUR helper (`yay`/`paru`),
-  and two of the libraries (`libg15`, `libg15render`) only come from
-  the AUR. **Other distros (Ubuntu, Fedora, openSUSE...) aren't
-  supported by the installer yet**: the program itself is plain C and
-  Python and will run there, but you'd have to install the packages in
-  the table below yourself (building `libg15`/`libg15render` from
-  source) and do the installer's steps by hand.
-- **A Logitech G510 or G510s**, with or without a headset plugged into
-  its audio jacks.
-- **A recent Linux kernel** — the keyboard is driven by the kernel's
-  own `hid-lg-g15` driver, and backlight colour control needs a kernel
-  whose driver exposes `/sys/class/leds/g15::kbd_backlight/multi_intensity`
-  (developed and tested on 7.x).
-- **Your user in the `input` group** — the LCD, G-keys and backlight
-  all belong to it. `install.sh` adds you if needed; log out and back
-  in afterwards.
-- **PipeWire** (with `pipewire-pulse`) for the audio visualizer.
-- The desktop shortcuts open `konsole` and `dolphin` (KDE). On another
-  desktop the app and services work the same; only those two shortcuts
-  need editing.
-- **Stats depend on your hardware's sensors** — see
-  [Sensors](#sensors-what-shows-up-on-which-hardware) below. Anything
-  your PC doesn't report shows `N/A` on the LCD.
-
-Everything it installs, and why:
-
-| Package | What it's for |
+| | |
 | --- | --- |
-| `python-pyqt5`, `python-pillow`, `python-evdev` | the GUI, image import, keyboard-event reading |
-| `ydotool` | macro keystroke replay — ships its own `uinput` udev rule and `ydotool.service` |
-| `freetype2` | renders the LCD's custom label font |
-| `zenity` | the little "restarted" confirmation popup from the Start shortcut |
-| `playerctl` | reads now-playing song/artist/elapsed time for the media sensors |
-| `libg15`, `libg15render` (AUR, via `yay`/`paru`) | the actual LCD pixel-format library this whole project is built on |
+| **Linux** | An Arch-based distro (Arch, Manjaro, EndeavourOS, Garuda…). The installer uses `pacman` and an AUR helper (`yay` or `paru` — install one first). On other distros the programs run, but you'd install the dependencies and do the installer's steps by hand (`libg15`/`libg15render` from source). |
+| **Keyboard** | Logitech G510 or G510s, with or without a headset plugged in. |
+| **Kernel** | A recent one: the keyboard uses the kernel's own `hid-lg-g15` driver, and colour control needs `/sys/class/leds/g15::kbd_backlight/multi_intensity` (developed on 7.x). |
+| **Permissions** | Your user in the `input` group. The installer adds you if needed — log out and back in afterwards. |
+| **Audio** | PipeWire (with `pipewire-pulse`) for the visualizer. |
+| **Desktop** | Anything. Two of the desktop shortcuts open `konsole`/`dolphin` (KDE); edit those two elsewhere. |
 
-An AUR helper (`yay` or `paru`) is the one thing `install.sh` can't
-install for you — grab one first if you don't already have one, then
-run `install.sh`.
+What the installer adds, and why:
 
-**Verifying it worked:**
-
-```
-systemctl --user status g510-lcd-stats.service g510-lcd-buttons.service g510-macro-daemon.service
-```
-
-All three should say `active (running)`. If the LCD doesn't light up
-straight away, unplug and replug the keyboard once.
-
-**What you get:**
-- Live CPU / RAM / VRAM / TEMP stats on the built-in LCD
-- Full RGB backlight colour control
-- G-key macros across M1 / M2 / M3 profiles
-- Custom Screens dashboard builder — drag sensors, images, and text
-  onto L2-L5, plus a live analog clock on L1
-- A little Winamp on your keyboard — bouncing equalizer bars for
-  whatever's playing, plus the song title, artist, and elapsed time
-- Runs as your normal user, starts at login, shrugs off reboots —
-  no root faffing about
-
-![G510s Control app — v1](docs/screenshots/g510s-control-v1.png)
+| Package | For |
+| --- | --- |
+| `python-pyqt5`, `python-pillow`, `python-evdev` | the app, image import, reading the G-keys |
+| `ydotool` | replaying macro keystrokes |
+| `freetype2` | the LCD's label font |
+| `playerctl` | song title / artist / time for the media sensors |
+| `zenity` | the "restarted" popup from the Start shortcut |
+| `libg15`, `libg15render` (AUR) | the LCD drawing library everything is built on |
 
 ## Sensors: what shows up on which hardware
 
-The LCD finds your sensors by driver name, so it works on most PCs
-without any setup. To see exactly what it picked on yours:
+Sensors are found by driver name, so most PCs need no setup. To see
+what was picked on yours:
 
 ```
 src/g510_lcd_stats --sensors
@@ -102,109 +83,96 @@ src/g510_lcd_stats --sensors
 
 | LCD reading | Works on | Otherwise |
 | --- | --- | --- |
-| CPU temp | AMD Ryzen/EPYC (`k10temp`, `zenpower`), Intel (`coretemp`), ARM / Raspberry Pi (`cpu_thermal`); falls back to the `x86_pkg_temp` thermal zone | N/A |
-| GPU temp | AMD (`amdgpu`, `radeon`), NVIDIA proprietary driver (via NVML), NVIDIA `nouveau`, Intel Arc (`xe`) | N/A (Intel integrated graphics have no temperature sensor) |
+| CPU temp | AMD (`k10temp`, `zenpower`), Intel (`coretemp`), ARM / Raspberry Pi (`cpu_thermal`); falls back to the `x86_pkg_temp` thermal zone | N/A |
+| GPU temp | AMD (`amdgpu`, `radeon`), NVIDIA proprietary driver (via NVML), NVIDIA `nouveau`, Intel Arc (`xe`) | N/A — Intel integrated graphics have no temperature sensor |
 | GPU hotspot temp | AMD (`amdgpu`) | N/A |
 | GPU VRAM temp | AMD (`amdgpu`), Intel Arc (`xe`) | N/A |
-| GPU load + VRAM used | AMD (`amdgpu`), NVIDIA proprietary driver (via NVML) | N/A |
-| Motherboard temps (`MB_TEMP1`–`8`) | Gigabyte (`gigabyte_wmi`), ASUS (`asus_wmi_sensors`, `asus-ec-sensors`), most other boards through their Nuvoton `nct67xx`/`nct66xx`, ITE `it87xx`, Winbond or Fintek chip; Dell, ThinkPad and HP laptops | N/A |
+| GPU load, VRAM used | AMD (`amdgpu`), NVIDIA proprietary driver | N/A |
+| Motherboard temps (`MB_TEMP1`–`8`) | Gigabyte (`gigabyte_wmi`), ASUS (`asus_wmi_sensors`, `asus-ec-sensors`), most other boards via their Nuvoton `nct67xx`/`nct66xx`, ITE `it87xx`, Winbond or Fintek chip; Dell, ThinkPad, HP laptops | N/A |
 | CPU load/clock, RAM, swap, disk, network, uptime, media | every Linux PC | — |
 
-Good to know:
-- **Several graphics cards** (e.g. a Ryzen APU plus a real card): the
-  one with the most VRAM is used. With more than one NVIDIA card, the
-  first one is used.
-- **NVIDIA**: the proprietary driver has no Linux sensor files, so the
-  readings come from `libnvidia-ml`, which ships with the driver. It's
-  loaded only when an NVIDIA driver is actually running.
-- **Laptops with a switchable GPU**: a GPU that's asleep is left
-  asleep — its readings show N/A rather than waking it up.
-- **Motherboard sensors missing?** Many boards need their sensor
-  driver loaded first. Run `sudo sensors-detect` (from `lm_sensors`)
-  and load what it suggests (often `sudo modprobe nct6775`); some ITE
-  chips need the out-of-tree `it87` driver from the AUR.
-- Only AMD hardware has been checked on a real machine so far. The
-  Intel, NVIDIA and other paths are covered by tests against simulated
-  sensor trees (`tests/run-tests.sh`). Reports from other hardware are
-  welcome — include the `--sensors` output.
+- **Two graphics cards** (e.g. a Ryzen APU plus a real card): the one
+  with the most VRAM is used; with several NVIDIA cards, the first.
+- **NVIDIA:** its driver has no Linux sensor files, so readings come
+  from `libnvidia-ml` (ships with the driver), loaded only when an
+  NVIDIA driver is running.
+- **Laptops with a switchable GPU:** a sleeping GPU is left asleep and
+  shows N/A instead of being woken up.
+- **Motherboard sensors missing?** Many boards need their sensor driver
+  loaded: run `sudo sensors-detect` (from `lm_sensors`) and load what it
+  suggests, often `sudo modprobe nct6775`. Some ITE chips need the
+  out-of-tree `it87` driver from the AUR.
+- So far only AMD hardware has been checked on a real machine. Intel,
+  NVIDIA and the rest are covered by tests against simulated sensor
+  trees. Reports from other hardware are welcome — include the
+  `--sensors` output.
 
 ## The audio visualizer
 
-Drop a visualizer onto any of the L2-L5 screens and the LCD turns into
-a tiny live equalizer — bars that actually bounce to the music,
-alongside the song title, artist, and a running "1:23 / 3:45" clock.
+Drop a visualizer onto any of L2–L5 and the LCD becomes a tiny live
+equalizer next to the song title, artist and a running `1:23/3:45`.
 
-It doesn't hook into Spotify, or your browser, or any app in
-particular — it just listens to whatever's coming out of your
-speakers, the same way a physical VU meter would. That means it works
-identically with Spotify, YouTube in a browser tab, VLC, a game,
-literally anything, with nothing to configure and nothing that can
-fall out of sync with "what app is currently playing." Resize it like
-any other element and it fills the extra space with more bars, not
-just bigger ones.
+It doesn't hook into any particular app: it listens to whatever is
+coming out of your speakers, like a real VU meter. So it works the same
+with Spotify, a YouTube tab, VLC or a game, with nothing to configure.
+Make it bigger and it adds more bars rather than fatter ones.
 
-It only listens while a screen with a visualizer is actually showing
-on the LCD — switch to the stats or clock screen and the audio capture
-stops completely (same for the song-info lookups), so it costs nothing
-when you're not looking at it.
+It only listens while a screen with a visualizer is actually on the
+LCD; on the stats or clock screen the audio capture and song lookups
+stop completely.
 
 ## How it works
 
-A PyQt5 app (`g510_app.py`) talks straight to `/dev/g510-lcd` and
-`/dev/g510-keys` — proper stable symlinks, not flaky device numbers —
-instead of relying on `g15daemon`, which gets this keyboard's key
-mappings wrong. Runs quietly as three systemd `--user` services.
+Three small programs run as systemd `--user` services:
+
+| Service | Does |
+| --- | --- |
+| `g510-lcd-stats` (C) | draws every LCD screen and sends it to `/dev/g510-lcd` |
+| `g510-lcd-buttons` (C) | listens to L1–L5 on `/dev/g510-keys` and switches screens |
+| `g510-macro-daemon` (Python) | listens to G1–G18 and M1–M3 and replays macros through `ydotool` |
+
+The app (`src/g510_app.py`) is the editor: backlight, macros and the
+Custom Screens builder. Its previews are rendered by the same C
+program that drives the LCD, so they match the real screen pixel for
+pixel.
+
+`/dev/g510-lcd` and `/dev/g510-keys` are stable links made by the udev
+rule in `udev/`, not device numbers that change between boots. The
+keyboard drops off USB and comes back whenever its headset jack is
+plugged or unplugged; everything reconnects on its own.
+
+Run the tests with `tests/run-tests.sh` — nothing in them touches your
+keyboard or your saved settings.
 
 ## Status
 
-- **Public** on GitHub.
-- **`main`**: tagged `v1.0` (LCD stats, backlight, G-key macros) —
-  stable, confirmed. Analog clock, Custom Screens polish, and several
-  real bug fixes have since merged on top, physically confirmed
-  working on the real keyboard.
-- **`g510s-dev`**: active work, merges to `main` only once it's
-  physically confirmed on the real keyboard — standing rule, not a
-  delay.
-- Not on the AUR — not currently being pursued.
-
-## Not the repo you're after?
-
-This used to also hold a separate app for the Logitech **G910** —
-different keyboard, different codebase. That's fully moved out to
-[grumpybollocks/g910-control](https://github.com/grumpybollocks/g910-control),
-already ahead of anything that was ever here. Every G910 branch and
-tag has also been removed from this repo (see [`BRANCHES.md`](BRANCHES.md)
-for the full history) — no G910 *file*, branch, or tag has lived on
-`main` since 2026-09-17.
+- Public, MIT-licensed, in daily use on the developer's own G510s.
+- Changes land on `main` through pull requests and are confirmed on
+  the real keyboard.
+- Not on the AUR yet (a PKGBUILD lives in `packaging/`).
 
 ## Docs
 
 - [`G510_README.md`](G510_README.md) — the full story: protocol
-  details, every bug hit and fixed, font conversion, udev rules.
+  details, every bug hit and fixed, fonts, udev rules.
 - [`G510_CUSTOM_SCREENS_HOWTO.md`](G510_CUSTOM_SCREENS_HOWTO.md) — how
-  to actually use the Custom Screens editor.
+  to use the Custom Screens editor.
+- [`BRANCHES.md`](BRANCHES.md) — branch history.
+
+**Looking for the G910?** That app moved to its own repo:
+[grumpybollocks/g910-control](https://github.com/grumpybollocks/g910-control).
 
 ---
 
 ## The cheeky bits
 
-A few things that happened along the way worth a mention, because
-they're the kind of detail that makes a "personal project" actually
-personal:
-
-- The app can show free space on a second drive over its LCD like any
-  other sensor, on request — fully optional, shows "N/A" gracefully on
-  any setup that doesn't have one.
-- This started out alongside a sibling app for the Logitech G910 (see
-  "Not the repo you're after?" above) before the split. That history
-  predates the split and lives on in this repo's own commit log even
-  though the G910 app's files themselves have moved on.
-- "wtf are the blue squares for?" is a genuine, verbatim piece of user
-  feedback that shipped an actual UI fix (resize handles now only show
-  up when you're hovering near them, not all at once) — which is as
-  good a reminder as any that real usage beats guessing every time.
-
----
+- The LCD can show free space on a second drive like any other sensor —
+  fully optional, and it shows "N/A" gracefully if you don't have one.
+- This started out sharing a repo with the G910 app before the two
+  split; that history still lives in this repo's commit log.
+- "wtf are the blue squares for?" is genuine, verbatim user feedback
+  that shipped a real UI fix (resize handles now only appear when you
+  hover near them) — real usage beats guessing every time.
 
 ## License
 
