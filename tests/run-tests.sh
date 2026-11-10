@@ -36,5 +36,10 @@ if command -v udevadm >/dev/null && udevadm verify --help >/dev/null 2>&1; then
 fi
 echo
 
+echo "== test_buttons_reconnect"
+./test_buttons_reconnect.sh | sed 's/^/  /'
+[ "${PIPESTATUS[0]}" -eq 0 ] || rc=1
+echo
+
 [ $rc -eq 0 ] && echo "ALL C TESTS PASSED" || echo "SOME C TESTS FAILED"
 exit $rc
