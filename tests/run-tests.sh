@@ -13,7 +13,7 @@ rc=0
 for t in test_sensor_lookup test_lcd_missing; do
     echo "== $t"
     if ! gcc -Wall -Wextra $CF -DPROJECT_DIR="\"$PROJECT_DIR\"" -DTEST_SCRATCH="\"$S\"" \
-            "$t.c" -o "$S/$t" -lg15render $LF -lm; then
+            "$t.c" -o "$S/$t" -lg15render $LF -lm -ldl; then
         echo "BUILD FAILED: $t"; rc=1; continue
     fi
     "$S/$t" || rc=1
