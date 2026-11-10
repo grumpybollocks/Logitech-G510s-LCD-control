@@ -29,6 +29,7 @@ if [ "$(id -u)" -eq 0 ]; then
     echo "(it asks for your sudo password itself, only for the steps that need it)"
     exit 1
 fi
+command -v sudo >/dev/null || { echo "This installer needs 'sudo' (for the system-wide steps). Install it, then re-run."; exit 1; }
 SUDO=sudo
 
 # ------------------------------------------------------------------ distro
@@ -94,6 +95,13 @@ for pkg in "${PKGS[@]}"; do
 done
 if [ ${#MISSING[@]} -gt 0 ]; then inst "${MISSING[@]}"; else echo "  All distro packages already installed."; fi
 
+# Arch: build tools are needed by the AUR build (step 2) and nm (TrueType check).
+# Same rule as before -- only installed if gcc/pkg-config/nm are missing -- just earlier.
+if [ "$FAMILY" = arch ] && { ! command -v gcc &>/dev/null || ! command -v pkg-config &>/dev/null || ! command -v nm &>/dev/null; }; then
+    echo "  [missing] build tools (gcc/pkg-config/binutils)"
+    inst base-devel pkgconf
+fi
+
 echo "=== 2/8: LCD library (libg15, libg15render) ==="
 if [ "$FAMILY" = arch ]; then
     # Arch family: the AUR packages (needs an AUR helper).
@@ -129,7 +137,10 @@ else
             || { echo "  [error] building $p failed -- last lines of the build log:"; tail -15 "$WORK/$p.log"; exit 1; }
         echo "  [built]   $p"
     done
-    # Make sure the loader searches /usr/local/lib (Debian/Ubuntu already do; Fedora/openSUSE don't).
+fi
+if [ "$FAMILY" != arch ]; then
+    # Make sure the loader searches /usr/local/lib (Debian/Ubuntu already do;
+    # Fedora/openSUSE don't). Every run, so a half-finished earlier run recovers.
     if ! grep -qsx '/usr/local/lib' /etc/ld.so.conf /etc/ld.so.conf.d/*.conf; then
         echo /usr/local/lib | $SUDO tee /etc/ld.so.conf.d/g510-lcd.conf >/dev/null
     fi
@@ -149,12 +160,16 @@ ydotool_ok() { command -v ydotool >/dev/null && is_ydotoold_1x "$(command -v ydo
 if ! ydotool_ok; then
     case "$FAMILY" in
         arch)
-            # installed from the repos in step 1 -- never build it here
-            echo "  [error] the installed ydotool isn't version 1.x -- update it: sudo pacman -Syu ydotool"; exit 1 ;;
+            # installed from the repos in step 1 -- never built here
+            echo "  [warn] ydotool doesn't look like version 1.x -- if G-key macros don't replay: sudo pacman -Syu ydotool" ;;
         debian)
-            # use the distro's only if it's already 1.x (Ubuntu 24.04 ships 0.1.8, which can't)
+            # use the distro's only if it's already 1.x (Ubuntu 24.04 ships 0.1.8, which can't).
+            # Fresh lists first; strip a Debian epoch ("1:0.1.8-3" is 0.1.8).
+            $SUDO apt-get update -qq || true
             cand=$(apt-cache policy ydotool 2>/dev/null | awk '/Candidate:/{print $2}')
-            case "$cand" in [1-9]*) inst ydotool ;; esac ;;
+            case "${cand#*:}" in
+                [1-9]*) inst ydotool || echo "  [warn] apt couldn't install ydotool $cand (see above) -- building it from source instead" ;;
+            esac ;;
         *)
             inst ydotool || echo "  [warn] the package manager couldn't install ydotool (see above) -- building it from source instead" ;;
     esac
@@ -162,6 +177,8 @@ if ! ydotool_ok; then
 fi
 if ydotool_ok; then
     echo "  [ok]      ydotool 1.x ($(command -v ydotoold))"
+elif [ "$FAMILY" = arch ]; then
+    :   # warned above; Arch keeps its packaged ydotool
 else
     echo "  this distro's ydotool is missing or too old -- building ydotool 1.0.4 from source (checksum-pinned)..."
     fetch_verified https://github.com/ReimuNotMoe/ydotool/archive/refs/tags/v1.0.4.tar.gz \
@@ -193,9 +210,13 @@ fi
 # The user service must start a 1.x ydotoold. If there's none, or the one that
 # exists starts an old (0.1.x) daemon, write our own in ~/.config, which takes
 # precedence over a packaged one.
-unit_bin=$(systemctl --user show ydotool.service -p ExecStart --value 2>/dev/null | sed -nE 's/.*path=([^ ;]+).*/\1/p')
-if is_ydotoold_1x "$unit_bin"; then
+unit_bin=$(systemctl --user show ydotool.service -p ExecStart --value 2>/dev/null | sed -nE 's/^\{ path=([^ ;]+).*/\1/p')
+if [ "$(systemctl --user is-enabled ydotool.service 2>/dev/null)" = masked ]; then
+    echo "  [warn]    ydotool.service is masked -- G-key macros won't replay until: systemctl --user unmask ydotool.service"
+elif is_ydotoold_1x "$unit_bin"; then
     echo "  [ok]      ydotool user service ($unit_bin)"
+elif [ "$FAMILY" = arch ] && ! ydotool_ok; then
+    :   # don't override Arch's packaged unit with a daemon we couldn't verify
 else
     mkdir -p ~/.config/systemd/user
     cat > ~/.config/systemd/user/ydotool.service <<EOF
@@ -238,10 +259,7 @@ echo "=== 5/8: Compile the C programs ==="
 # Same FreeType/TTF flags libg15render.so itself was built with -- without them
 # g15canvas's struct layout mismatches and corrupts stack memory (bit us once,
 # caught via AddressSanitizer). -DPROJECT_DIR bakes in THIS checkout's path.
-if [ "$FAMILY" = arch ] && { ! command -v gcc &>/dev/null || ! command -v pkg-config &>/dev/null; }; then
-    echo "  [missing] build tools (gcc/pkg-config)"
-    inst base-devel pkgconf
-fi
+# (Arch build tools were checked before step 2.)
 # scripts/g15-flags.sh adds the /usr/local paths only where that library is the
 # one the loader uses (the same flags rebuild.sh and the tests use).
 gcc $(scripts/g15-flags.sh) $(pkg-config --cflags freetype2) -DPROJECT_DIR="\"$DIR\"" src/g510_lcd_stats.c -o src/g510_lcd_stats \
