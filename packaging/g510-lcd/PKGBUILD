@@ -1,9 +1,9 @@
 # Maintainer: grumpybollocks
 pkgname=g510-lcd
 pkgver=1.1
-pkgrel=2
+pkgrel=3
 pkgdesc="LCD stats screen, custom dashboards, backlight, and G-key macros for the Logitech G510s Gaming Keyboard"
-arch=('any')
+arch=('x86_64')   # ships compiled binaries (g510_lcd_stats, g510_lcd_buttons)
 url="https://github.com/grumpybollocks/Logitech-G510s-LCD-control"
 license=('MIT')
 depends=('python' 'python-pyqt5' 'python-pillow' 'python-evdev' 'ydotool' 'freetype2' 'zenity' 'playerctl' 'libg15' 'libg15render')
@@ -33,6 +33,12 @@ build() {
     src/g510_lcd_stats.c -o src/g510_lcd_stats \
     -lg15render $(pkg-config --libs freetype2) -lm -ldl
   gcc src/g510_lcd_buttons.c -o src/g510_lcd_buttons
+
+  # Label fonts, same conversion install.sh/rebuild.sh do -- without this
+  # the package had no .fnt files at all and every label fell back to the
+  # stock font (g15fontconvert ships with libg15render).
+  g15fontconvert -s 8 -i fonts/source-ttf/FONT.otf -o fonts/lcd-label-8.fnt
+  g15fontconvert -s 8 -i fonts/source-ttf/FALLBACK.ttf -o fonts/lcd-label-8-fallback.fnt
 }
 
 package() {
@@ -77,11 +83,18 @@ EOF
   # calls a fixed-location wrapper instead (see restore-backlight.sh
   # below), so there's nothing left to strip or substitute here.
   install -Dm644 udev/99-g510-lcd.rules "$pkgdir/usr/lib/udev/rules.d/99-g510-lcd.rules"
+  # Stop -> Play/Pause key remap (install.sh had it; the package didn't)
+  install -Dm644 udev/91-g510-stop-to-playpause.hwdb "$pkgdir/usr/lib/udev/hwdb.d/91-g510-stop-to-playpause.hwdb"
+
+  install -Dm644 fonts/lcd-label-8.fnt "$pkgdir/usr/lib/$pkgname/fonts/lcd-label-8.fnt"
+  install -Dm644 fonts/lcd-label-8-fallback.fnt "$pkgdir/usr/lib/$pkgname/fonts/lcd-label-8-fallback.fnt"
+  install -Dm644 fonts/source-ttf/FALLBACK.LICENSE.txt "$pkgdir/usr/share/licenses/$pkgname/FALLBACK-FONT-LICENSE.txt"
 
   # udev fires as root with no per-user $HOME to resolve -- this
   # wrapper finds whoever actually has the active seat0 session via
-  # loginctl at hotplug time instead, then execs THEIR own saved
-  # ~/.local/share/g510-lcd/set-backlight-color.sh. Zero PROJECT_DIR
+  # loginctl at hotplug time instead, then reads (never executes -- see
+  # the script) the colour saved in THEIR ~/.local/share/g510-lcd/
+  # set-backlight-color.sh. Zero PROJECT_DIR
   # dependency, so it's installed at the exact same fixed path
   # install.sh also uses -- the udev rule itself is identical either
   # way, dev checkout or real package.
