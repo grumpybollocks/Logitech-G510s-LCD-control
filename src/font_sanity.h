@@ -9,7 +9,7 @@
    keep in sync by hand if that table changes). Checked instead of the
    full alphabet so a font that legitimately never converted an unused
    glyph doesn't trip a false positive. */
-static const char LABEL_SANITY_CHARS[] = "ACDEGHIKLMNOPRSTUVWXZ2";
+static const char LABEL_SANITY_CHARS[] = "ABCDEGHIKLMNOPRSTUVWXZ123456"; /* + B,1,3-6 for MB1-MB6 (2026-11-10) */
 
 /* Returns 1 if `font` looks like a real, usable label font, 0 if it
    looks corrupted enough that it shouldn't be trusted.

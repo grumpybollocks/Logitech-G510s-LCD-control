@@ -10,7 +10,7 @@ S=$(mktemp -d)
 trap 'rm -rf "$S"' EXIT
 CF=$(pkg-config --cflags freetype2); LF=$(pkg-config --libs freetype2)
 rc=0
-for t in test_sensor_lookup test_lcd_missing; do
+for t in test_sensor_lookup test_lcd_missing test_render; do
     echo "== $t"
     if ! gcc -Wall -Wextra $CF -DPROJECT_DIR="\"$PROJECT_DIR\"" -DTEST_SCRATCH="\"$S\"" \
             "$t.c" -o "$S/$t" -lg15render $LF -lm -ldl; then
