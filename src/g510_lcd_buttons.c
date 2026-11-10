@@ -8,6 +8,10 @@
 
 #define NUM_SCREENS 2
 
+#ifndef G510_KEYS_DEV
+#define G510_KEYS_DEV "/dev/g510-keys"   /* tests build with a fake path */
+#endif
+
 /* User-specific by nature -- built at runtime from $HOME rather than
    baked in at compile time, so this file doesn't hardcode a username. */
 static const char *button_log_path(void) {
@@ -106,22 +110,35 @@ static long ms_since(struct timespec *last) {
    reset-failed` or reboot even after the keyboard is replugged. Same
    fix as g510_macro_daemon.py's _wait_for_device(): poll internally
    instead of crash-looping through systemd. */
-static FILE *wait_for_device(void) {
+/* Also used after the keyboard drops off USB mid-run (2026-11-10): the
+   G510s re-enumerates every time the headset jack is plugged/unplugged
+   (USB ID c22e <-> c22d), which used to mean exit(1) + a 3 s systemd
+   restart + a "buttons-restarts" alert from g510-watch each time. Now
+   the same process just waits here and carries on. Polls every 200 ms
+   so L1-L5 are back about as soon as udev has set the new node up (the
+   first open can briefly hit EACCES before the rule applies -- that's
+   just another retry). */
+#define DEVICE_POLL_MS 200
+
+static FILE *wait_for_device(const char *why) {
     int printed = 0;
     while (1) {
-        FILE *f = fopen("/dev/g510-keys", "rb");
-        if (f) return f;
+        FILE *f = fopen(G510_KEYS_DEV, "rb");
+        if (f) {
+            if (printed) fprintf(stderr, "g510-lcd-buttons: %s is back\n", G510_KEYS_DEV);
+            return f;
+        }
         if (!printed) {
-            fprintf(stderr, "g510-lcd-buttons: /dev/g510-keys not found yet -- "
-                             "waiting for the keyboard to be plugged in...\n");
+            fprintf(stderr, "g510-lcd-buttons: %s -- waiting for %s...\n", why, G510_KEYS_DEV);
             printed = 1;
         }
-        sleep(3);
+        usleep(DEVICE_POLL_MS * 1000);
     }
 }
 
 int main(void) {
-    FILE *f = wait_for_device();
+    setvbuf(stderr, NULL, _IOLBF, 0);   /* journald gets each line as it happens */
+    FILE *f = wait_for_device("keyboard not found yet");
 
     /* These switches bounce (confirmed: single physical presses were
        logging 2-4 times). Track the last accepted press time per key
@@ -129,7 +146,20 @@ int main(void) {
     struct timespec last_press[701] = {0};
 
     struct input_event ev;
-    while (fread(&ev, sizeof(ev), 1, f) == 1) {
+    for (;;) {
+        if (fread(&ev, sizeof(ev), 1, f) != 1) {
+            /* The only way out of a blocking read on an evdev node is the
+               device going away (unplug, jack re-enumeration, suspend
+               dropping USB) -- `systemctl stop` just kills the process.
+               Reopen instead of exiting (see wait_for_device()). */
+            fclose(f);
+            /* pause once before reopening: during re-enumeration the old
+               node can still open and then fail every read straight away,
+               which without this would spin the CPU until it's gone */
+            usleep(DEVICE_POLL_MS * 1000);
+            f = wait_for_device("keyboard disconnected");
+            continue;
+        }
         if (ev.type != EV_KEY || ev.value != 1) continue; /* only key-down */
         if (ev.code < 696 || ev.code > 700) continue;
 
@@ -146,21 +176,10 @@ int main(void) {
             log_button(key_name(ev.code));
         }
     }
-    /* Real bug found via self-audit: this loop only ever ends because
-       fread() failed (EOF or a read error) -- there's no signal
-       handler or "shutdown requested" flag anywhere in this file, so
-       a `systemctl stop` just kills the process outright rather than
-       exiting the loop normally. That means every natural loop-exit
-       here really is a device failure (most plausibly the keyboard
-       being unplugged, or a suspend/resume cycle dropping the USB
-       connection) -- but this used to `return 0` regardless, and the
-       systemd unit's Restart=on-failure only restarts on a NON-ZERO
-       exit. A clean exit(0) after losing the device meant L1-L5 would
-       stop responding permanently until someone noticed and manually
-       restarted the service, even after the keyboard was replugged
-       and /dev/g510-keys existed again. Exiting non-zero here lets
-       systemd's existing Restart=on-failure/RestartSec=3 actually do
-       its job and keep retrying the open. */
-    fclose(f);
+    /* not reached: the loop above never exits. History: it used to
+       end on a failed read and exit(1) so systemd's Restart=on-failure
+       would reopen the device -- a clean exit(0) there had once left
+       L1-L5 dead until a manual restart. Reconnecting in-process (above)
+       replaces both; Restart=on-failure stays as a crash safety net. */
     return 1;
 }
