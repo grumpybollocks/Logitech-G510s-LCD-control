@@ -1,73 +1,182 @@
 #!/bin/bash
-# Full setup for the G510s LCD project on a fresh Manjaro/Arch install.
-# Run this from inside the project folder: ./install.sh
+# Full setup for the G510s LCD project. Run it from inside the project folder:
 #
-# Installs every dependency this project needs, puts the system files
-# (udev rules, hwdb remap, systemd services) in place, and compiles the
-# C programs. Safe to re-run any time -- every step just overwrites/
-# re-applies, nothing accumulates.
+#   ./install.sh          normal install (asks you to replug the keyboard once)
+#   ./install.sh --yes    same, without waiting for the replug prompt
+#
+# Supported: Arch family (Arch, Manjaro, EndeavourOS, Garuda, CachyOS...) and
+# Debian/Ubuntu family (Debian, Ubuntu, Mint, Pop!_OS...). Fedora and openSUSE
+# are attempted with the same steps but haven't been tested yet.
+#
+# Installs every dependency, puts the system files (udev rules, hwdb remap,
+# systemd services) in place and compiles the C programs. Safe to re-run any
+# time -- every step checks first and only adds what's missing.
+#
+# Where a distro doesn't package something this needs, it's built from source,
+# from a pinned release whose checksum must match (the same checksums the Arch
+# packages use): libg15 + libg15render 1.3.1 (the LCD library), and ydotool
+# 1.0.4 when the distro's ydotool is too old to replay macros (e.g. Ubuntu
+# 24.04 ships 0.1.8). Those go to /usr/local and never replace distro files.
 set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
+YES=0; [ "${1:-}" = "--yes" ] && YES=1
+SUDO=sudo; [ "$(id -u)" -eq 0 ] && SUDO=
 
-echo "=== 1/7: Official repo packages ==="
-# Real per-package [ok]/[missing] reporting -- never a silent pacman
-# black box. Only actually-missing packages get installed.
-PACMAN_PKGS=(python-pyqt5 python-pillow ydotool python-evdev freetype2 zenity playerctl)
-MISSING_PACMAN_PKGS=()
-for pkg in "${PACMAN_PKGS[@]}"; do
-    if pacman -Qi "$pkg" &>/dev/null; then
-        echo "  [ok]      $pkg"
-    else
-        echo "  [missing] $pkg"
-        MISSING_PACMAN_PKGS+=("$pkg")
-    fi
+# ------------------------------------------------------------------ distro
+[ -r /etc/os-release ] && . /etc/os-release
+FAMILY=""
+for id in ${ID:-} ${ID_LIKE:-}; do
+    case "$id" in
+        arch|archlinux) FAMILY=arch ;;
+        debian|ubuntu)  FAMILY=debian ;;
+        fedora|rhel|centos) FAMILY=fedora ;;
+        suse|opensuse|opensuse-tumbleweed|opensuse-leap) FAMILY=suse ;;
+    esac
+    [ -n "$FAMILY" ] && break
 done
-if [ ${#MISSING_PACMAN_PKGS[@]} -gt 0 ]; then
-    sudo pacman -S --needed --noconfirm "${MISSING_PACMAN_PKGS[@]}"
+if [ -z "$FAMILY" ]; then
+    echo "Sorry: ${PRETTY_NAME:-this Linux} isn't one this installer knows (Arch, Debian/Ubuntu,"
+    echo "Fedora, openSUSE families). The README lists what's needed to set it up by hand."
+    exit 1
+fi
+echo "Detected: ${PRETTY_NAME:-unknown} -> $FAMILY family"
+case "$FAMILY" in fedora|suse) echo "  NOTE: $FAMILY isn't tested yet -- please report how it goes." ;; esac
+
+# Packages per family. ydotool is handled separately below (version matters).
+case "$FAMILY" in
+    arch)   PKGS=(python-pyqt5 python-pillow python-evdev freetype2 zenity playerctl libpulse base-devel pkgconf ydotool)
+            have() { pacman -Qi "$1" &>/dev/null; }
+            inst() { $SUDO pacman -S --needed --noconfirm "$@"; } ;;
+    debian) PKGS=(python3-pyqt5 python3-pil python3-evdev libfreetype-dev zenity playerctl pulseaudio-utils libusb-dev build-essential pkg-config cmake curl ca-certificates)
+            have() { dpkg -s "$1" &>/dev/null; }
+            inst() { $SUDO apt-get update -qq && $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"; } ;;
+    fedora) PKGS=(python3-qt5 python3-pillow python3-evdev freetype-devel zenity playerctl pulseaudio-utils libusb-compat-0.1-devel gcc make pkgconf-pkg-config cmake curl)
+            have() { rpm -q "$1" &>/dev/null || rpm -q --whatprovides "$1" &>/dev/null; }
+            inst() { $SUDO dnf install -y "$@"; } ;;
+    suse)   PKGS=(python3-qt5 python3-Pillow python3-evdev freetype2-devel zenity playerctl pulseaudio-utils libusb-compat-devel gcc make pkg-config cmake curl)
+            have() { rpm -q "$1" &>/dev/null || rpm -q --whatprovides "$1" &>/dev/null; }
+            inst() { $SUDO zypper --non-interactive install "$@"; } ;;
+esac
+
+# Build-from-source helper: download, verify the pinned checksum, unpack.
+# $1=url $2=sha512 $3=workdir -> prints the unpacked directory
+fetch_verified() {
+    local url=$1 want=$2 work=$3 file
+    file="$work/$(basename "$url")"
+    curl -sSfL -o "$file" "$url" || { echo "  [error] download failed: $url" >&2; return 1; }
+    if [ "$(sha512sum "$file" | cut -d' ' -f1)" != "$want" ]; then
+        echo "  [error] checksum mismatch for $url -- refusing to build it" >&2; return 1
+    fi
+    tar -xzf "$file" -C "$work"
+}
+
+echo "=== 1/8: Distro packages ==="
+# Real per-package [ok]/[missing] reporting -- never a silent black box.
+MISSING=()
+for pkg in "${PKGS[@]}"; do
+    [ "$pkg" = ydotool ] && continue      # step 3
+    if have "$pkg"; then echo "  [ok]      $pkg"; else echo "  [missing] $pkg"; MISSING+=("$pkg"); fi
+done
+if [ ${#MISSING[@]} -gt 0 ]; then inst "${MISSING[@]}"; else echo "  All distro packages already installed."; fi
+
+echo "=== 2/8: LCD library (libg15, libg15render) ==="
+if [ "$FAMILY" = arch ]; then
+    # Arch family: the AUR packages (needs an AUR helper).
+    AUR_MISSING=()
+    for pkg in libg15 libg15render; do
+        if pacman -Qi "$pkg" &>/dev/null; then echo "  [ok]      $pkg"; else echo "  [missing] $pkg"; AUR_MISSING+=("$pkg"); fi
+    done
+    if [ ${#AUR_MISSING[@]} -gt 0 ]; then
+        AUR=$(command -v yay || command -v paru || true)
+        if [ -z "$AUR" ]; then
+            echo "An AUR helper is needed for: ${AUR_MISSING[*]}"
+            echo "Install yay (https://github.com/Jguer/yay) or paru first, then re-run this script."
+            exit 1
+        fi
+        "$AUR" -S --needed --noconfirm "${AUR_MISSING[@]}"
+    fi
+elif [ -e /usr/local/lib/libg15render.so.1 ] && [ -e /usr/local/lib/libg15.so.1 ]; then
+    echo "  [ok]      libg15 + libg15render (built earlier, /usr/local)"
 else
-    echo "  All official-repo packages already installed."
+    # Everywhere else: build the exact release the AUR uses, from source, with
+    # TrueType support -- the LCD program must be built with the same TTF setting
+    # as the library or their shared struct layout differs (see G510_README.md).
+    echo "  building libg15 + libg15render 1.3.1 from source (checksum-pinned)..."
+    W=$(mktemp -d); trap 'rm -rf "$W"' EXIT
+    fetch_verified https://github.com/vividnightmare/libg15/archive/refs/tags/1.3.1.tar.gz \
+        7a76b4fd9358d65f82009e9b448e158f6ca4424256ecf24608f1a47d87a500952283e7c2f7fc6940d4fa550f52c03ee7cdda146b28da4c85580bca43fbaadee2 "$W"
+    fetch_verified https://github.com/vividnightmare/libg15render/archive/refs/tags/1.3.1.tar.gz \
+        c5bc04e281506415c4b559fde08f48e30b34cc6fdd47ca1765cefcf9eeb8aa82ad0902204d35358db36deebc491d8b8bdfb0d82741393f36dd7be5f80d12461c "$W"
+    for p in libg15 libg15render; do
+        extra=""; [ "$p" = libg15render ] && extra="--enable-ttf"
+        # GitHub's release tarballs drop the executable bit on ./configure: run it via sh
+        ( cd "$W/$p-1.3.1" && sh ./configure --prefix=/usr/local $extra >/dev/null && make -j"$(nproc)" >/dev/null && $SUDO make install >/dev/null ) \
+            || { echo "  [error] building $p failed"; exit 1; }
+        echo "  [built]   $p"
+    done
+    # Debian/Ubuntu already search /usr/local/lib; Fedora/openSUSE don't by default.
+    ldconfig -p 2>/dev/null | grep -q '/usr/local/lib/libg15render' || \
+        { echo /usr/local/lib | $SUDO tee /etc/ld.so.conf.d/g510-lcd.conf >/dev/null; }
+    $SUDO ldconfig
 fi
 
-echo "=== 2/7: AUR packages (libg15, libg15render -- needs yay) ==="
-AUR_PKGS=(libg15 libg15render)
-MISSING_AUR_PKGS=()
-for pkg in "${AUR_PKGS[@]}"; do
-    if pacman -Qi "$pkg" &>/dev/null; then
-        echo "  [ok]      $pkg"
-    else
-        echo "  [missing] $pkg"
-        MISSING_AUR_PKGS+=("$pkg")
-    fi
-done
-if [ ${#MISSING_AUR_PKGS[@]} -gt 0 ]; then
-    if ! command -v yay &>/dev/null; then
-        echo "yay not found, and these AUR packages are missing: ${MISSING_AUR_PKGS[*]}"
-        echo "Install an AUR helper first (https://github.com/Jguer/yay -- or paru/"
-        echo "whatever you prefer), then re-run this script -- or install these"
-        echo "two manually yourself, then re-run."
-        exit 1
-    fi
-    yay -S --needed --noconfirm "${MISSING_AUR_PKGS[@]}"
+echo "=== 3/8: ydotool (replays G-key macros) ==="
+# Macros are stored as raw keycodes ("29:1 46:1 46:0 29:0"), which needs
+# ydotool 1.x with its ydotoold daemon. 0.1.x understands neither.
+ydotool_ok() { command -v ydotoold >/dev/null && ydotool key --help 2>&1 | grep -q 'keycode>:<pressed'; }
+if ! ydotool_ok && [ "$FAMILY" != debian ]; then inst ydotool || true; fi
+if ydotool_ok; then
+    echo "  [ok]      ydotool 1.x"
 else
-    echo "  All AUR packages already installed."
+    echo "  this distro's ydotool is missing or too old -- building ydotool 1.0.4 from source (checksum-pinned)..."
+    W2=$(mktemp -d)
+    fetch_verified https://github.com/ReimuNotMoe/ydotool/archive/refs/tags/v1.0.4.tar.gz \
+        bbf66d752aa1dce9173c930e3a71bc277b330763b1aa0e38f9fec1976c282c64330251ba5abe222a991f4bcafbabf1312a940eb4b40a34bf99f628c2a41bc4a2 "$W2"
+    # build just the two programs (the man pages would need scdoc)
+    ( cd "$W2/ydotool-1.0.4" && cmake -B build -DCMAKE_INSTALL_PREFIX=/usr/local >/dev/null && \
+      cmake --build build --target ydotool ydotoold -j"$(nproc)" >/dev/null && \
+      $SUDO install -m755 build/ydotool build/ydotoold /usr/local/bin/ ) || { echo "  [error] building ydotool failed"; exit 1; }
+    rm -rf "$W2"
+    hash -r
+    ydotool_ok && echo "  [built]   ydotool 1.0.4 -> /usr/local/bin" || { echo "  [error] ydotool still not usable"; exit 1; }
+fi
+# ydotoold needs /dev/uinput (group input) and a per-user service; some
+# distros package neither. Add exactly what Arch's ydotool package ships.
+if ! grep -qsE 'KERNEL=="uinput".*GROUP="input"' /usr/lib/udev/rules.d/*.rules /etc/udev/rules.d/*.rules; then
+    echo 'KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"' \
+        | $SUDO tee /etc/udev/rules.d/80-g510-uinput.rules >/dev/null
+    echo "  [added]   /dev/uinput access for the 'input' group"
+fi
+if ! systemctl --user cat ydotool.service &>/dev/null; then
+    mkdir -p ~/.config/systemd/user
+    cat > ~/.config/systemd/user/ydotool.service <<EOF
+[Unit]
+Description=Starts ydotoold service (added by G510 install.sh)
+
+[Service]
+Type=simple
+Restart=always
+ExecStart=$(command -v ydotoold)
+ExecReload=/usr/bin/kill -HUP \$MAINPID
+KillMode=process
+TimeoutSec=180
+
+[Install]
+WantedBy=default.target
+EOF
+    echo "  [added]   ydotool user service"
 fi
 
-echo "=== 3/7: Convert the label fonts ==="
-# Both fonts ship in the repo (fonts/source-ttf/) -- this used to be a
-# manual step ("get your own copy of a commercial font, then run
-# g15fontconvert by hand"). Not anymore: both are bundled and this
-# converts them automatically every run (matches this file's own
-# "every step just overwrites" policy, and self-heals if a corrupted
-# .fnt ever triggers the runtime sanity-check fallback in
-# g510_lcd_stats.c -- see font_sanity.h).
+echo "=== 4/8: Convert the label fonts ==="
+# Both fonts ship in the repo (fonts/source-ttf/) and are converted every run
+# (self-heals a corrupted .fnt -- see font_sanity.h).
 convert_font() {
     # $1=source (.otf/.ttf)  $2=output (.fnt)  $3=description
     if [ ! -f "$1" ]; then
         echo "  [missing] $1 -- skipping conversion, $3 falls through to the next tier."
     elif ! command -v g15fontconvert &>/dev/null; then
-        echo "  [missing] g15fontconvert (ships with the libg15render AUR package"
-        echo "  installed in step 2) -- skipping conversion."
+        echo "  [missing] g15fontconvert (comes with libg15render, step 2) -- skipping conversion."
     else
         echo "  Converting $1 -> $2"
         g15fontconvert -s 8 -i "$1" -o "$2"
@@ -76,62 +185,42 @@ convert_font() {
 convert_font "$DIR/fonts/source-ttf/FONT.otf" "$DIR/fonts/lcd-label-8.fnt" "the primary label font"
 convert_font "$DIR/fonts/source-ttf/FALLBACK.ttf" "$DIR/fonts/lcd-label-8-fallback.fnt" "the fallback label font"
 
-echo "=== 4/7: Compile the C programs ==="
-if ! command -v gcc &>/dev/null || ! command -v pkg-config &>/dev/null; then
-    echo "  [missing] build tools (gcc/pkg-config)"
-    sudo pacman -S --needed --noconfirm base-devel pkgconf
-else
-    echo "  [ok]      build tools (gcc, pkg-config)"
-fi
-# g510_lcd_stats needs the same FreeType/TTF flags libg15render.so itself
-# was built with -- without them, g15canvas's struct layout mismatches
-# between this program and the library, corrupting stack memory (this
-# bit us once already while building v1.1; caught via AddressSanitizer).
-# -DPROJECT_DIR bakes in THIS checkout's absolute path so the binary
-# can find its own font/config files without any file in the repo
-# itself hardcoding a username or machine-specific location.
-gcc $(pkg-config --cflags freetype2) -DPROJECT_DIR="\"$DIR\"" src/g510_lcd_stats.c -o src/g510_lcd_stats -lg15render $(pkg-config --libs freetype2) -lm -ldl
+echo "=== 5/8: Compile the C programs ==="
+# Same FreeType/TTF flags libg15render.so itself was built with -- without them
+# g15canvas's struct layout mismatches and corrupts stack memory (bit us once,
+# caught via AddressSanitizer). -DPROJECT_DIR bakes in THIS checkout's path.
+# /usr/local: where step 2 puts the library on non-Arch distros (harmless on Arch).
+gcc -I/usr/local/include $(pkg-config --cflags freetype2) -DPROJECT_DIR="\"$DIR\"" src/g510_lcd_stats.c -o src/g510_lcd_stats \
+    -L/usr/local/lib -lg15render $(pkg-config --libs freetype2) -lm -ldl
 gcc src/g510_lcd_buttons.c -o src/g510_lcd_buttons
+echo "  [ok]      src/g510_lcd_stats, src/g510_lcd_buttons"
 
-echo "=== 5/7: udev rules + hwdb (needs sudo) ==="
-# The backlight-restore-on-hotplug script needs a fixed system location
-# udev can always find regardless of where this checkout lives (root,
-# no per-user $HOME to resolve at hotplug time) -- installed here
-# rather than referenced via a __PROJECT_DIR__ placeholder, and at the
-# exact same path the PKGBUILD installs it to, so the udev rule itself
-# never needs to know which install method put it there.
-sudo mkdir -p /usr/lib/g510-lcd
-sudo cp scripts/restore-backlight.sh /usr/lib/g510-lcd/restore-backlight.sh
-sudo chmod 755 /usr/lib/g510-lcd/restore-backlight.sh
-# The checked-in rule no longer has any __PROJECT_DIR__ placeholder to
-# substitute (the one that used to need it, the backlight-restore
-# line, now points at the fixed path above) -- this sed is harmless
-# insurance, not load-bearing, in case that ever changes again.
-sed "s|__PROJECT_DIR__|$DIR|g" udev/99-g510-lcd.rules | sudo tee /etc/udev/rules.d/99-g510-lcd.rules > /dev/null
-sudo cp udev/91-g510-stop-to-playpause.hwdb /etc/udev/hwdb.d/91-g510-stop-to-playpause.hwdb
-sudo udevadm control --reload-rules
-sudo systemd-hwdb update
+echo "=== 6/8: udev rules + hwdb (needs sudo) ==="
+# The backlight-restore-on-hotplug script lives at a fixed system path udev can
+# always find (same path the PKGBUILD uses), whatever the checkout location.
+$SUDO mkdir -p /usr/lib/g510-lcd
+$SUDO cp scripts/restore-backlight.sh /usr/lib/g510-lcd/restore-backlight.sh
+$SUDO chmod 755 /usr/lib/g510-lcd/restore-backlight.sh
+sed "s|__PROJECT_DIR__|$DIR|g" udev/99-g510-lcd.rules | $SUDO tee /etc/udev/rules.d/99-g510-lcd.rules > /dev/null
+$SUDO mkdir -p /etc/udev/hwdb.d
+$SUDO cp udev/91-g510-stop-to-playpause.hwdb /etc/udev/hwdb.d/91-g510-stop-to-playpause.hwdb
+$SUDO udevadm control --reload-rules
+$SUDO systemd-hwdb update
 
-# The LCD (hidraw, via the rule above), the G-keys (/dev/input/event*)
-# and the backlight LEDs are all group "input" -- a user outside that
-# group gets "Permission denied" on every one of them. Many distros
-# don't put desktop users in it by default.
+# The LCD (hidraw), the G-keys (/dev/input/event*), the backlight LEDs and
+# /dev/uinput (macros) are all group "input" -- a user outside it gets
+# "Permission denied" on every one. Many distros don't add desktop users to it.
 NEED_RELOGIN=0
 if id -nG "$USER" | tr ' ' '\n' | grep -qx input; then
     echo "  [ok]      $USER is in the 'input' group"
 else
     echo "  [adding]  $USER to the 'input' group (log out and back in afterwards)"
-    sudo usermod -aG input "$USER"
+    $SUDO usermod -aG input "$USER"
     NEED_RELOGIN=1
 fi
 
-# Seed a default backlight color so the replug below (which
-# restore-backlight.sh runs on) actually shows something instead of
-# silently doing nothing -- restore-backlight.sh looks for this exact
-# file and just exit-0's if it's missing. Deliberate exception to this
-# file's own "every step just overwrites" policy: only seeds if
-# genuinely absent, so it never clobbers a color you already picked
-# via the GUI on a re-run.
+# Seed a default backlight colour so the replug below shows something. Only if
+# absent -- never clobbers a colour you picked in the GUI.
 mkdir -p "$HOME/.local/share/g510-lcd"
 if [ ! -f "$HOME/.local/share/g510-lcd/set-backlight-color.sh" ]; then
     cp scripts/set-backlight-color.sh "$HOME/.local/share/g510-lcd/set-backlight-color.sh"
@@ -139,31 +228,43 @@ if [ ! -f "$HOME/.local/share/g510-lcd/set-backlight-color.sh" ]; then
     echo "  Seeded a default backlight color -- change it anytime from the GUI."
 fi
 
-echo "NOTE: unplug and replug the keyboard now so these fully apply."
-read -p "Press Enter once you've replugged the keyboard..."
+if [ "$YES" = 1 ] || [ ! -t 0 ]; then
+    echo "NOTE: unplug and replug the keyboard once so the new rules apply."
+else
+    echo "NOTE: unplug and replug the keyboard now so these fully apply."
+    read -r -p "Press Enter once you've replugged the keyboard..."
+fi
 
-echo "=== 6/7: systemd --user services ==="
+echo "=== 7/8: systemd --user services ==="
 mkdir -p ~/.config/systemd/user
 for svc in g510-lcd-stats g510-lcd-buttons g510-macro-daemon; do
     sed "s|__PROJECT_DIR__|$DIR|g" "services/$svc.service" > ~/.config/systemd/user/"$svc.service"
 done
 systemctl --user daemon-reload
-systemctl --user enable --now ydotool.service
+systemctl --user enable --now ydotool.service || true   # starts properly once you're in 'input' (re-login)
 systemctl --user enable --now g510-lcd-stats.service g510-lcd-buttons.service g510-macro-daemon.service
 
-echo "=== 7/7: Desktop shortcuts ==="
-# Generated fresh from the resolved $DIR every run -- a clean clone used to
-# get zero shortcuts here (this step only chmod'd ones that had to already
-# exist by hand). Written to BOTH ~/Desktop and ~/.local/share/applications:
-# several desktop environments (GNOME notably) don't show desktop icons by
-# default at all, so ~/Desktop alone leaves the app menu with nothing.
-# Pattern matches the sibling G910 app's install-g910.sh (now in the
-# separate grumpybollocks/g910-control repo), already verified working
-# there.
+echo "=== 8/8: Desktop shortcuts ==="
 mkdir -p "$HOME/Desktop" "$HOME/.local/share/applications"
 
+# Open a script in whatever terminal this desktop has (KDE, GNOME, Xfce, ...).
+term_cmd() {
+    local t
+    for t in konsole gnome-terminal kgx ptyxis xfce4-terminal mate-terminal tilix kitty alacritty xterm; do
+        command -v "$t" >/dev/null || continue
+        case "$t" in
+            konsole)                    echo "konsole --noclose -e \"$1\"" ;;
+            gnome-terminal|kgx|ptyxis)  echo "$t -- \"$1\"" ;;
+            xfce4-terminal|mate-terminal) echo "$t -x \"$1\"" ;;
+            tilix|alacritty|xterm)      echo "$t -e \"$1\"" ;;
+            kitty)                      echo "kitty \"$1\"" ;;
+        esac
+        return
+    done
+    echo "xdg-open \"$1\""
+}
+
 write_shortcut() {
-    # $1=display name  $2=xdg filename stem  $3=Comment  $4=Exec  $5=Icon
     local entry="[Desktop Entry]
 Type=Application
 Name=$1
@@ -186,7 +287,7 @@ write_shortcut "G510 LCD - App" "g510-lcd-app" \
 
 write_shortcut "G510 LCD - Rebuild" "g510-lcd-rebuild" \
     "Recompile the keyboard LCD program after editing and restart it" \
-    "konsole --noclose -e \"$DIR/scripts/rebuild.sh\"" "utilities-terminal"
+    "$(term_cmd "$DIR/scripts/rebuild.sh")" "utilities-terminal"
 
 write_shortcut "G510 LCD - Start" "g510-lcd-start" \
     "One-click start for the keyboard LCD screen and button services" \
@@ -194,11 +295,11 @@ write_shortcut "G510 LCD - Start" "g510-lcd-start" \
 
 write_shortcut "G510 LCD - View Logs" "g510-lcd-view-logs" \
     "Watch live logs from the keyboard LCD screen and button services" \
-    "konsole --noclose -e \"$DIR/scripts/view-logs.sh\"" "utilities-terminal"
+    "$(term_cmd "$DIR/scripts/view-logs.sh")" "utilities-terminal"
 
 write_shortcut "G510 LCD - Project Folder" "g510-lcd-project-folder" \
     "Open the keyboard LCD project source and files" \
-    "dolphin \"$DIR\"" "folder"
+    "xdg-open \"$DIR\"" "folder"
 
 echo ""
 echo "=== Done ==="
@@ -208,7 +309,7 @@ echo "Brave + media keys together (see G510_README.md, MEDIA KEYS FIX #2)."
 echo ""
 if [ "$NEED_RELOGIN" = 1 ]; then
     echo "*** You were just added to the 'input' group: log out and back in"
-    echo "*** (or reboot) before the LCD, G-keys and backlight will work."
+    echo "*** (or reboot) before the LCD, G-keys, macros and backlight will work."
     echo ""
 fi
 echo "Sensors this PC's LCD will show (N/A = not found -- see README 'Sensors'):"

@@ -12,7 +12,7 @@ set -u
 SECS="${1:-60}"
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="$DIR/src/g510_lcd_stats"
-DEBUGLIB=/usr/lib/libc_malloc_debug.so.0
+DEBUGLIB=$(ls /usr/lib/libc_malloc_debug.so.0 /usr/lib/x86_64-linux-gnu/libc_malloc_debug.so.0 /usr/lib64/libc_malloc_debug.so.0 2>/dev/null | head -1)
 UNIT=g510-lcd-stats.service
 
 [ -x "$BIN" ] || { echo "no binary at $BIN -- run install.sh first"; exit 2; }
