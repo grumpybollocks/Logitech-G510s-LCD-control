@@ -111,8 +111,9 @@ else
     for p in libg15 libg15render; do
         extra=""; [ "$p" = libg15render ] && extra="--enable-ttf"
         # GitHub's release tarballs drop the executable bit on ./configure: run it via sh
-        ( cd "$W/$p-1.3.1" && sh ./configure --prefix=/usr/local $extra >/dev/null && make -j"$(nproc)" >/dev/null && $SUDO make install >/dev/null ) \
-            || { echo "  [error] building $p failed"; exit 1; }
+        # compiler output goes to a log (libg15render prints harmless warnings); shown on failure
+        ( cd "$W/$p-1.3.1" && sh ./configure --prefix=/usr/local $extra && make -j"$(nproc)" && $SUDO make install ) >"$W/$p.log" 2>&1 \
+            || { echo "  [error] building $p failed -- last lines of the build log:"; tail -15 "$W/$p.log"; exit 1; }
         echo "  [built]   $p"
     done
     # Debian/Ubuntu already search /usr/local/lib; Fedora/openSUSE don't by default.
@@ -137,9 +138,10 @@ else
     fetch_verified https://github.com/ReimuNotMoe/ydotool/archive/refs/tags/v1.0.4.tar.gz \
         bbf66d752aa1dce9173c930e3a71bc277b330763b1aa0e38f9fec1976c282c64330251ba5abe222a991f4bcafbabf1312a940eb4b40a34bf99f628c2a41bc4a2 "$W2"
     # build just the two programs (the man pages would need scdoc)
-    ( cd "$W2/ydotool-1.0.4" && cmake -B build -DCMAKE_INSTALL_PREFIX=/usr/local >/dev/null && \
-      cmake --build build --target ydotool ydotoold -j"$(nproc)" >/dev/null && \
-      $SUDO install -m755 build/ydotool build/ydotoold /usr/local/bin/ ) || { echo "  [error] building ydotool failed"; exit 1; }
+    ( cd "$W2/ydotool-1.0.4" && cmake -B build -DCMAKE_INSTALL_PREFIX=/usr/local && \
+      cmake --build build --target ydotool ydotoold -j"$(nproc)" && \
+      $SUDO install -m755 build/ydotool build/ydotoold /usr/local/bin/ ) >"$W2/build.log" 2>&1 \
+      || { echo "  [error] building ydotool failed -- last lines of the build log:"; tail -15 "$W2/build.log"; exit 1; }
     rm -rf "$W2"
     hash -r
     ydotool_ok && echo "  [built]   ydotool 1.0.4 -> /usr/local/bin" || { echo "  [error] ydotool still not usable"; exit 1; }
@@ -154,9 +156,11 @@ fi
 # That rule (static_node) is only applied when udev starts, i.e. at the next
 # boot -- so also apply it NOW, or ydotoold can't open /dev/uinput until a
 # reboot (a re-login isn't enough; found testing on Ubuntu 24.04).
-$SUDO modprobe uinput 2>/dev/null || true
-if [ -e /dev/uinput ] && [ "$(stat -c %G /dev/uinput)" != input ]; then
-    $SUDO chgrp input /dev/uinput && $SUDO chmod 0660 /dev/uinput && echo "  [ok]      /dev/uinput usable now (no reboot needed)"
+if [ ! -e /dev/uinput ] || [ "$(stat -c %G /dev/uinput)" != input ]; then
+    $SUDO modprobe uinput 2>/dev/null || true
+    if [ -e /dev/uinput ]; then
+        $SUDO chgrp input /dev/uinput && $SUDO chmod 0660 /dev/uinput && echo "  [ok]      /dev/uinput usable now (no reboot needed)"
+    fi
 fi
 if ! systemctl --user cat ydotool.service &>/dev/null; then
     mkdir -p ~/.config/systemd/user
