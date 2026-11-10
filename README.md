@@ -27,6 +27,33 @@ to re-run any time. You'll be asked for your `sudo` password once (for
 the udev rules and package installs), and to unplug/replug the
 keyboard partway through so those rules actually take effect.
 
+### What your PC needs
+
+- **An Arch-based Linux** — Arch, Manjaro, EndeavourOS, Garuda and the
+  like. `install.sh` uses `pacman` plus an AUR helper (`yay`/`paru`),
+  and two of the libraries (`libg15`, `libg15render`) only come from
+  the AUR. **Other distros (Ubuntu, Fedora, openSUSE...) aren't
+  supported by the installer yet**: the program itself is plain C and
+  Python and will run there, but you'd have to install the packages in
+  the table below yourself (building `libg15`/`libg15render` from
+  source) and do the installer's steps by hand.
+- **A Logitech G510 or G510s**, with or without a headset plugged into
+  its audio jacks.
+- **A recent Linux kernel** — the keyboard is driven by the kernel's
+  own `hid-lg-g15` driver, and backlight colour control needs a kernel
+  whose driver exposes `/sys/class/leds/g15::kbd_backlight/multi_intensity`
+  (developed and tested on 7.x).
+- **Your user in the `input` group** — the LCD, G-keys and backlight
+  all belong to it. `install.sh` adds you if needed; log out and back
+  in afterwards.
+- **PipeWire** (with `pipewire-pulse`) for the audio visualizer.
+- The desktop shortcuts open `konsole` and `dolphin` (KDE). On another
+  desktop the app and services work the same; only those two shortcuts
+  need editing.
+- **Stats depend on your hardware's sensors** — see
+  [Sensors](#sensors-what-shows-up-on-which-hardware) below. Anything
+  your PC doesn't report shows `N/A` on the LCD.
+
 Everything it installs, and why:
 
 | Package | What it's for |
@@ -63,6 +90,43 @@ straight away, unplug and replug the keyboard once.
   no root faffing about
 
 ![G510s Control app — v1](docs/screenshots/g510s-control-v1.png)
+
+## Sensors: what shows up on which hardware
+
+The LCD finds your sensors by driver name, so it works on most PCs
+without any setup. To see exactly what it picked on yours:
+
+```
+src/g510_lcd_stats --sensors
+```
+
+| LCD reading | Works on | Otherwise |
+| --- | --- | --- |
+| CPU temp | AMD Ryzen/EPYC (`k10temp`, `zenpower`), Intel (`coretemp`), ARM / Raspberry Pi (`cpu_thermal`); falls back to the `x86_pkg_temp` thermal zone | N/A |
+| GPU temp | AMD (`amdgpu`, `radeon`), NVIDIA proprietary driver (via NVML), NVIDIA `nouveau`, Intel Arc (`xe`) | N/A (Intel integrated graphics have no temperature sensor) |
+| GPU hotspot temp | AMD (`amdgpu`) | N/A |
+| GPU VRAM temp | AMD (`amdgpu`), Intel Arc (`xe`) | N/A |
+| GPU load + VRAM used | AMD (`amdgpu`), NVIDIA proprietary driver (via NVML) | N/A |
+| Motherboard temps (`MB_TEMP1`–`8`) | Gigabyte (`gigabyte_wmi`), ASUS (`asus_wmi_sensors`, `asus-ec-sensors`), most other boards through their Nuvoton `nct67xx`/`nct66xx`, ITE `it87xx`, Winbond or Fintek chip; Dell, ThinkPad and HP laptops | N/A |
+| CPU load/clock, RAM, swap, disk, network, uptime, media | every Linux PC | — |
+
+Good to know:
+- **Several graphics cards** (e.g. a Ryzen APU plus a real card): the
+  one with the most VRAM is used. With more than one NVIDIA card, the
+  first one is used.
+- **NVIDIA**: the proprietary driver has no Linux sensor files, so the
+  readings come from `libnvidia-ml`, which ships with the driver. It's
+  loaded only when an NVIDIA driver is actually running.
+- **Laptops with a switchable GPU**: a GPU that's asleep is left
+  asleep — its readings show N/A rather than waking it up.
+- **Motherboard sensors missing?** Many boards need their sensor
+  driver loaded first. Run `sudo sensors-detect` (from `lm_sensors`)
+  and load what it suggests (often `sudo modprobe nct6775`); some ITE
+  chips need the out-of-tree `it87` driver from the AUR.
+- Only AMD hardware has been checked on a real machine so far. The
+  Intel, NVIDIA and other paths are covered by tests against simulated
+  sensor trees (`tests/run-tests.sh`). Reports from other hardware are
+  welcome — include the `--sensors` output.
 
 ## The audio visualizer
 

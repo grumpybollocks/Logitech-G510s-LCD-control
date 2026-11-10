@@ -31,7 +31,7 @@ build() {
   # install (install.sh) has to do it.
   gcc $(pkg-config --cflags freetype2) -DPROJECT_DIR='"/usr/lib/g510-lcd"' \
     src/g510_lcd_stats.c -o src/g510_lcd_stats \
-    -lg15render $(pkg-config --libs freetype2) -lm
+    -lg15render $(pkg-config --libs freetype2) -lm -ldl
   gcc src/g510_lcd_buttons.c -o src/g510_lcd_buttons
 }
 
