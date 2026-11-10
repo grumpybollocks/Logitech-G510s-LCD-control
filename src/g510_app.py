@@ -44,7 +44,7 @@ import g510_canvas
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent  # repo root (this file lives in src/)
 LED_DIR = Path("/sys/class/leds/g15::kbd_backlight")
-DEFAULTS_SCRIPT = PROJECT_DIR / "scripts" / "set-backlight-color.sh"
+# (DEFAULTS_SCRIPT, the checkout copy, is no longer written -- see write_defaults_script.)
 # The udev rule (99-g510-lcd.rules) has this exact path baked in at
 # install time (see install.sh), so this location can't just move --
 # doing that alone, without also re-running install.sh's sudo udev
@@ -271,9 +271,9 @@ def read_current_rgb():
 
 def write_defaults_script(rgb, brightness_val):
     script = f"""#!/bin/bash
-# Applies the chosen keyboard backlight color. Run automatically by
-# 99-g510-lcd.rules whenever the LED device appears (boot or replug).
-# Auto-updated by g510_app.py every time you click Apply or Set as Default.
+# The chosen keyboard backlight color, saved by g510_app.py on Apply / Set as
+# Default. Not executed: restore-backlight.sh only reads the two values below
+# (at login and whenever the keyboard appears).
 echo {brightness_val} > /sys/class/leds/g15::kbd_backlight/brightness
 echo "{rgb[0]} {rgb[1]} {rgb[2]}" > /sys/class/leds/g15::kbd_backlight/multi_intensity
 """
@@ -283,18 +283,14 @@ echo "{rgb[0]} {rgb[1]} {rgb[2]}" > /sys/class/leds/g15::kbd_backlight/multi_int
     # data-folder copy. That write left the git checkout permanently modified,
     # and in a packaged install it raised FileNotFoundError (the folder doesn't
     # exist there), which escaped the PyQt5 slot and aborted the app.
-    # Real bug found by code review: this second write is structurally
-    # identical to the one above but had no guard at all, so on.apply()/
-    # on_set_as_default()/on_save_all() (every call site of this function)
-    # would raise straight out of a PyQt5 slot if ~/.local/share/g510-lcd
-    # ever became unwritable (disk full, permission drift, read-only
-    # remount) -- the same class of error the write right above this one
-    # is already hardened against.
+    # Guarded: every caller (apply / set as default / save all) is a PyQt5
+    # slot, and an exception escaping one aborts the app -- e.g. if
+    # ~/.local/share/g510-lcd is full, read-only or has wrong permissions.
     try:
         DEFAULTS_SCRIPT_DATA_DIR.write_text(script)
         DEFAULTS_SCRIPT_DATA_DIR.chmod(0o755)
-    except OSError:   # any file error (not just PermissionError) -- never abort the GUI
-        pass
+    except OSError as e:   # any file error -- never abort the GUI, but say so
+        print(f"g510_app: couldn't save the backlight default ({e})", file=sys.stderr)
 
 
 
