@@ -9,11 +9,12 @@ PROJECT_DIR="$(cd .. && pwd)"
 S=$(mktemp -d)
 trap 'rm -rf "$S"' EXIT
 CF=$(pkg-config --cflags freetype2); LF=$(pkg-config --libs freetype2)
+G15F=$("$PROJECT_DIR/scripts/g15-flags.sh")   # /usr/local paths only where that library is the one loaded
 rc=0
 for t in test_sensor_lookup test_lcd_missing test_render; do
     echo "== $t"
-    if ! gcc -Wall -Wextra -I/usr/local/include $CF -DPROJECT_DIR="\"$PROJECT_DIR\"" -DTEST_SCRATCH="\"$S\"" \
-            "$t.c" -o "$S/$t" -L/usr/local/lib -lg15render $LF -lm -ldl; then
+    if ! gcc -Wall -Wextra $G15F $CF -DPROJECT_DIR="\"$PROJECT_DIR\"" -DTEST_SCRATCH="\"$S\"" \
+            "$t.c" -o "$S/$t" -lg15render $LF -lm -ldl; then
         echo "BUILD FAILED: $t"; rc=1; continue
     fi
     "$S/$t" || rc=1

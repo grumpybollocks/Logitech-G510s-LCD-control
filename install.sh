@@ -21,7 +21,15 @@ set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
 YES=0; [ "${1:-}" = "--yes" ] && YES=1
-SUDO=sudo; [ "$(id -u)" -eq 0 ] && SUDO=
+# Run as your normal user: it sets things up for YOU ($USER, your services, your
+# 'input' group membership) and uses sudo only where needed. Under sudo, $USER
+# and $HOME would be root's and the user services step can't work.
+if [ "$(id -u)" -eq 0 ]; then
+    echo "Please run this as your normal user, not with sudo:  ./install.sh"
+    echo "(it asks for your sudo password itself, only for the steps that need it)"
+    exit 1
+fi
+SUDO=sudo
 
 # ------------------------------------------------------------------ distro
 [ -r /etc/os-release ] && . /etc/os-release
@@ -43,13 +51,16 @@ fi
 echo "Detected: ${PRETTY_NAME:-unknown} -> $FAMILY family"
 case "$FAMILY" in fedora|suse) echo "  NOTE: $FAMILY isn't tested yet -- please report how it goes." ;; esac
 
-# Packages per family. ydotool is handled separately below (version matters).
+# Packages per family. Arch's list is exactly what it always was (build tools are
+# added in step 5 only if gcc/pkg-config are missing); elsewhere the build tools
+# are needed anyway for the source builds, and ydotool is handled in step 3.
 case "$FAMILY" in
-    arch)   PKGS=(python-pyqt5 python-pillow python-evdev freetype2 zenity playerctl libpulse base-devel pkgconf ydotool)
+    arch)   PKGS=(python-pyqt5 python-pillow ydotool python-evdev freetype2 zenity playerctl)
             have() { pacman -Qi "$1" &>/dev/null; }
             inst() { $SUDO pacman -S --needed --noconfirm "$@"; } ;;
     debian) PKGS=(python3-pyqt5 python3-pil python3-evdev libfreetype-dev zenity playerctl pulseaudio-utils libusb-dev build-essential pkg-config cmake curl ca-certificates)
-            have() { dpkg -s "$1" &>/dev/null; }
+            # "install ok installed" only: `dpkg -s` also succeeds for removed-but-not-purged packages
+            have() { dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'install ok installed'; }
             inst() { $SUDO apt-get update -qq && $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"; } ;;
     fedora) PKGS=(python3-qt5 python3-pillow python3-evdev freetype-devel zenity playerctl pulseaudio-utils libusb-compat-0.1-devel gcc make pkgconf-pkg-config cmake curl)
             have() { rpm -q "$1" &>/dev/null || rpm -q --whatprovides "$1" &>/dev/null; }
@@ -59,23 +70,26 @@ case "$FAMILY" in
             inst() { $SUDO zypper --non-interactive install "$@"; } ;;
 esac
 
-# Build-from-source helper: download, verify the pinned checksum, unpack.
-# $1=url $2=sha512 $3=workdir -> prints the unpacked directory
+# One scratch dir for every source build, removed however the script ends.
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+
+# Build-from-source helper: download, verify the pinned sha512, unpack into $2.
 fetch_verified() {
-    local url=$1 want=$2 work=$3 file
-    file="$work/$(basename "$url")"
+    local url=$1 want=$2 into=$3 file
+    mkdir -p "$into"
+    file="$into/download.tar.gz"
     curl -sSfL -o "$file" "$url" || { echo "  [error] download failed: $url" >&2; return 1; }
     if [ "$(sha512sum "$file" | cut -d' ' -f1)" != "$want" ]; then
         echo "  [error] checksum mismatch for $url -- refusing to build it" >&2; return 1
     fi
-    tar -xzf "$file" -C "$work"
+    tar -xzf "$file" -C "$into"
 }
 
 echo "=== 1/8: Distro packages ==="
 # Real per-package [ok]/[missing] reporting -- never a silent black box.
 MISSING=()
 for pkg in "${PKGS[@]}"; do
-    [ "$pkg" = ydotool ] && continue      # step 3
     if have "$pkg"; then echo "  [ok]      $pkg"; else echo "  [missing] $pkg"; MISSING+=("$pkg"); fi
 done
 if [ ${#MISSING[@]} -gt 0 ]; then inst "${MISSING[@]}"; else echo "  All distro packages already installed."; fi
@@ -103,46 +117,60 @@ else
     # TrueType support -- the LCD program must be built with the same TTF setting
     # as the library or their shared struct layout differs (see G510_README.md).
     echo "  building libg15 + libg15render 1.3.1 from source (checksum-pinned)..."
-    W=$(mktemp -d); trap 'rm -rf "$W"' EXIT
     fetch_verified https://github.com/vividnightmare/libg15/archive/refs/tags/1.3.1.tar.gz \
-        7a76b4fd9358d65f82009e9b448e158f6ca4424256ecf24608f1a47d87a500952283e7c2f7fc6940d4fa550f52c03ee7cdda146b28da4c85580bca43fbaadee2 "$W"
+        7a76b4fd9358d65f82009e9b448e158f6ca4424256ecf24608f1a47d87a500952283e7c2f7fc6940d4fa550f52c03ee7cdda146b28da4c85580bca43fbaadee2 "$WORK/libg15"
     fetch_verified https://github.com/vividnightmare/libg15render/archive/refs/tags/1.3.1.tar.gz \
-        c5bc04e281506415c4b559fde08f48e30b34cc6fdd47ca1765cefcf9eeb8aa82ad0902204d35358db36deebc491d8b8bdfb0d82741393f36dd7be5f80d12461c "$W"
+        c5bc04e281506415c4b559fde08f48e30b34cc6fdd47ca1765cefcf9eeb8aa82ad0902204d35358db36deebc491d8b8bdfb0d82741393f36dd7be5f80d12461c "$WORK/libg15render"
     for p in libg15 libg15render; do
         extra=""; [ "$p" = libg15render ] && extra="--enable-ttf"
-        # GitHub's release tarballs drop the executable bit on ./configure: run it via sh
-        # compiler output goes to a log (libg15render prints harmless warnings); shown on failure
-        ( cd "$W/$p-1.3.1" && sh ./configure --prefix=/usr/local $extra && make -j"$(nproc)" && $SUDO make install ) >"$W/$p.log" 2>&1 \
-            || { echo "  [error] building $p failed -- last lines of the build log:"; tail -15 "$W/$p.log"; exit 1; }
+        # GitHub's release tarballs drop the executable bit on ./configure: run it via sh.
+        # Compiler output goes to a log (libg15render prints harmless warnings); shown on failure.
+        ( cd "$WORK/$p/$p-1.3.1" && sh ./configure --prefix=/usr/local $extra && make -j"$(nproc)" && $SUDO make install ) >"$WORK/$p.log" 2>&1 \
+            || { echo "  [error] building $p failed -- last lines of the build log:"; tail -15 "$WORK/$p.log"; exit 1; }
         echo "  [built]   $p"
     done
-    # Debian/Ubuntu already search /usr/local/lib; Fedora/openSUSE don't by default.
-    ldconfig -p 2>/dev/null | grep -q '/usr/local/lib/libg15render' || \
-        { echo /usr/local/lib | $SUDO tee /etc/ld.so.conf.d/g510-lcd.conf >/dev/null; }
+    # Make sure the loader searches /usr/local/lib (Debian/Ubuntu already do; Fedora/openSUSE don't).
+    if ! grep -qsx '/usr/local/lib' /etc/ld.so.conf /etc/ld.so.conf.d/*.conf; then
+        echo /usr/local/lib | $SUDO tee /etc/ld.so.conf.d/g510-lcd.conf >/dev/null
+    fi
     $SUDO ldconfig
 fi
+# Whichever library the loader will use must have TrueType support.
+scripts/g15-flags.sh --check || exit 1
+echo "  [ok]      $(scripts/g15-flags.sh --lib) has TrueType support"
 
 echo "=== 3/8: ydotool (replays G-key macros) ==="
 # Macros are stored as raw keycodes ("29:1 46:1 46:0 29:0"), which needs
 # ydotool 1.x with its ydotoold daemon. 0.1.x understands neither.
 # (Detected via ydotoold's own --help: "ydotool key --help" only answers when
 # the daemon is already running, so it can't be used before setup.)
-ydotool_ok() { command -v ydotool >/dev/null && command -v ydotoold >/dev/null && \
-               timeout 3 ydotoold --help 2>&1 | grep -q -- '--socket-path'; }
-if ! ydotool_ok && [ "$FAMILY" != debian ]; then inst ydotool || true; fi
+is_ydotoold_1x() { [ -n "$1" ] && [ -x "$1" ] && timeout 3 "$1" --help 2>&1 | grep -q -- '--socket-path'; }
+ydotool_ok() { command -v ydotool >/dev/null && is_ydotoold_1x "$(command -v ydotoold)"; }
+if ! ydotool_ok; then
+    case "$FAMILY" in
+        arch)
+            # installed from the repos in step 1 -- never build it here
+            echo "  [error] the installed ydotool isn't version 1.x -- update it: sudo pacman -Syu ydotool"; exit 1 ;;
+        debian)
+            # use the distro's only if it's already 1.x (Ubuntu 24.04 ships 0.1.8, which can't)
+            cand=$(apt-cache policy ydotool 2>/dev/null | awk '/Candidate:/{print $2}')
+            case "$cand" in [1-9]*) inst ydotool ;; esac ;;
+        *)
+            inst ydotool || echo "  [warn] the package manager couldn't install ydotool (see above) -- building it from source instead" ;;
+    esac
+    hash -r
+fi
 if ydotool_ok; then
-    echo "  [ok]      ydotool 1.x"
+    echo "  [ok]      ydotool 1.x ($(command -v ydotoold))"
 else
     echo "  this distro's ydotool is missing or too old -- building ydotool 1.0.4 from source (checksum-pinned)..."
-    W2=$(mktemp -d)
     fetch_verified https://github.com/ReimuNotMoe/ydotool/archive/refs/tags/v1.0.4.tar.gz \
-        bbf66d752aa1dce9173c930e3a71bc277b330763b1aa0e38f9fec1976c282c64330251ba5abe222a991f4bcafbabf1312a940eb4b40a34bf99f628c2a41bc4a2 "$W2"
+        bbf66d752aa1dce9173c930e3a71bc277b330763b1aa0e38f9fec1976c282c64330251ba5abe222a991f4bcafbabf1312a940eb4b40a34bf99f628c2a41bc4a2 "$WORK/ydotool"
     # build just the two programs (the man pages would need scdoc)
-    ( cd "$W2/ydotool-1.0.4" && cmake -B build -DCMAKE_INSTALL_PREFIX=/usr/local && \
+    ( cd "$WORK/ydotool/ydotool-1.0.4" && cmake -B build -DCMAKE_INSTALL_PREFIX=/usr/local && \
       cmake --build build --target ydotool ydotoold -j"$(nproc)" && \
-      $SUDO install -m755 build/ydotool build/ydotoold /usr/local/bin/ ) >"$W2/build.log" 2>&1 \
-      || { echo "  [error] building ydotool failed -- last lines of the build log:"; tail -15 "$W2/build.log"; exit 1; }
-    rm -rf "$W2"
+      $SUDO install -m755 build/ydotool build/ydotoold /usr/local/bin/ ) >"$WORK/ydotool.log" 2>&1 \
+      || { echo "  [error] building ydotool failed -- last lines of the build log:"; tail -15 "$WORK/ydotool.log"; exit 1; }
     hash -r
     ydotool_ok && echo "  [built]   ydotool 1.0.4 -> /usr/local/bin" || { echo "  [error] ydotool still not usable"; exit 1; }
 fi
@@ -162,7 +190,13 @@ if [ ! -e /dev/uinput ] || [ "$(stat -c %G /dev/uinput)" != input ]; then
         $SUDO chgrp input /dev/uinput && $SUDO chmod 0660 /dev/uinput && echo "  [ok]      /dev/uinput usable now (no reboot needed)"
     fi
 fi
-if ! systemctl --user cat ydotool.service &>/dev/null; then
+# The user service must start a 1.x ydotoold. If there's none, or the one that
+# exists starts an old (0.1.x) daemon, write our own in ~/.config, which takes
+# precedence over a packaged one.
+unit_bin=$(systemctl --user show ydotool.service -p ExecStart --value 2>/dev/null | sed -nE 's/.*path=([^ ;]+).*/\1/p')
+if is_ydotoold_1x "$unit_bin"; then
+    echo "  [ok]      ydotool user service ($unit_bin)"
+else
     mkdir -p ~/.config/systemd/user
     cat > ~/.config/systemd/user/ydotool.service <<EOF
 [Unit]
@@ -179,7 +213,8 @@ TimeoutSec=180
 [Install]
 WantedBy=default.target
 EOF
-    echo "  [added]   ydotool user service"
+    systemctl --user daemon-reload 2>/dev/null || true
+    echo "  [added]   ydotool user service ($(command -v ydotoold))"
 fi
 
 echo "=== 4/8: Convert the label fonts ==="
@@ -203,9 +238,14 @@ echo "=== 5/8: Compile the C programs ==="
 # Same FreeType/TTF flags libg15render.so itself was built with -- without them
 # g15canvas's struct layout mismatches and corrupts stack memory (bit us once,
 # caught via AddressSanitizer). -DPROJECT_DIR bakes in THIS checkout's path.
-# /usr/local: where step 2 puts the library on non-Arch distros (harmless on Arch).
-gcc -I/usr/local/include $(pkg-config --cflags freetype2) -DPROJECT_DIR="\"$DIR\"" src/g510_lcd_stats.c -o src/g510_lcd_stats \
-    -L/usr/local/lib -lg15render $(pkg-config --libs freetype2) -lm -ldl
+if [ "$FAMILY" = arch ] && { ! command -v gcc &>/dev/null || ! command -v pkg-config &>/dev/null; }; then
+    echo "  [missing] build tools (gcc/pkg-config)"
+    inst base-devel pkgconf
+fi
+# scripts/g15-flags.sh adds the /usr/local paths only where that library is the
+# one the loader uses (the same flags rebuild.sh and the tests use).
+gcc $(scripts/g15-flags.sh) $(pkg-config --cflags freetype2) -DPROJECT_DIR="\"$DIR\"" src/g510_lcd_stats.c -o src/g510_lcd_stats \
+    -lg15render $(pkg-config --libs freetype2) -lm -ldl
 gcc src/g510_lcd_buttons.c -o src/g510_lcd_buttons
 echo "  [ok]      src/g510_lcd_stats, src/g510_lcd_buttons"
 
