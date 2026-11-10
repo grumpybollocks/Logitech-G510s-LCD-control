@@ -27,6 +27,8 @@
 #include <errno.h>
 #include <poll.h>
 #include <sys/inotify.h>
+#include <sys/ioctl.h>
+#include <linux/hidraw.h>
 
 /* LCD device node (stable udev symlink). Overridable ONLY at build time,
    so tests can exercise the "device missing" path without unplugging
@@ -79,6 +81,26 @@ static void dump_to_lcd_format(unsigned char *lcd_buffer, unsigned char const *d
     }
 }
 
+/* Is this open hidraw node the G510/G510s LCD interface? Logitech
+   046d:c22d (no headset) / c22e (headset plugged), USB interface 1 --
+   interface 0 is the plain keyboard and has the same IDs. Test builds
+   (a fake FIFO "device") define G510_LCD_NO_ID_CHECK. */
+static int is_g510_lcd(int fd) {
+#ifdef G510_LCD_NO_ID_CHECK
+    (void)fd;
+    return 1;
+#else
+    struct hidraw_devinfo info;
+    char phys[128] = "";
+    if (ioctl(fd, HIDIOCGRAWINFO, &info) < 0) return 0;
+    if ((unsigned short)info.vendor != 0x046d) return 0;
+    if ((unsigned short)info.product != 0xc22d && (unsigned short)info.product != 0xc22e) return 0;
+    if (ioctl(fd, HIDIOCGRAWPHYS(sizeof(phys) - 1), phys) < 0) return 0;
+    size_t n = strlen(phys);
+    return n >= 7 && strcmp(phys + n - 7, "/input1") == 0;
+#endif
+}
+
 static void send_frame(g15canvas *canvas) {
     unsigned char report[992];
     memset(report, 0, 32);
@@ -96,26 +118,44 @@ static void send_frame(g15canvas *canvas) {
        closes it, and the next frame reopens whatever the link now
        points to. */
     static int fd = -1;
-    static int lcd_missing = 0;
+    static int lcd_missing = 0;   /* an outage has been logged; cleared only by a WRITE that works */
     if (fd < 0) {
         fd = open(G510_LCD_DEV, O_WRONLY | O_CLOEXEC);
+        if (fd >= 0 && !is_g510_lcd(fd)) {
+            /* During re-enumeration the kernel can hand the freed hidrawN
+               to another device before udev has moved the g510-lcd link
+               -- and with a persistent fd every later frame would go
+               there. Only keep a node that is the G510's interface 1. */
+            close(fd);
+            fd = -1;
+            errno = ENXIO;
+        }
         if (fd < 0) {
-            if (!lcd_missing) { perror("open " G510_LCD_DEV " (will retry silently every frame)"); lcd_missing = 1; }
+            if (!lcd_missing) {
+                fprintf(stderr, "g510-lcd-stats: open " G510_LCD_DEV ": %s (will retry silently every frame)\n",
+                        errno == ENXIO ? "not the G510 LCD interface (udev still updating?)" : strerror(errno));
+                lcd_missing = 1;
+            }
             return;
         }
-        if (lcd_missing) { fprintf(stderr, "g510-lcd-stats: " G510_LCD_DEV " is back\n"); lcd_missing = 0; }
     }
     ssize_t written = write(fd, report, sizeof(report));
-    if (written != (ssize_t)sizeof(report)) {
-        if (written < 0 && !lcd_missing) {
-            fprintf(stderr, "g510-lcd-stats: write to " G510_LCD_DEV " failed: %s (reopening)\n", strerror(errno));
-            lcd_missing = 1;
-        } else if (written >= 0) {
-            fprintf(stderr, "g510-lcd-stats: short write to " G510_LCD_DEV " (%zd/%zu bytes)\n", written, sizeof(report));
-        }
-        close(fd);
-        fd = -1;
+    if (written == (ssize_t)sizeof(report)) {
+        if (lcd_missing) { fprintf(stderr, "g510-lcd-stats: " G510_LCD_DEV " is back\n"); lcd_missing = 0; }
+        return;
     }
+    /* failed or short write: log once per outage (not every frame -- a
+       wedged device that opens but won't take writes would otherwise
+       log 2 lines per frame), then reopen next frame */
+    if (!lcd_missing) {
+        if (written < 0)
+            fprintf(stderr, "g510-lcd-stats: write to " G510_LCD_DEV " failed: %s (reopening)\n", strerror(errno));
+        else
+            fprintf(stderr, "g510-lcd-stats: short write to " G510_LCD_DEV " (%zd/%zu bytes, reopening)\n", written, sizeof(report));
+        lcd_missing = 1;
+    }
+    close(fd);
+    fd = -1;
 }
 
 /* Renders the canvas to a plain PPM image instead of the real hardware --
@@ -436,7 +476,13 @@ static void *nvml_sym(const char *a, const char *b) {
 }
 
 static int nvml_ready(void) {
-    if (g_nvml.state) return g_nvml.state > 0;
+    /* a failure is retried every SENSOR_RESCAN_SEC (it used to be final:
+       a service started before the nvidia module showed N/A forever) */
+    static time_t last_try = 0;
+    if (g_nvml.state > 0) return 1;
+    time_t now = time(NULL);
+    if (g_nvml.state < 0 && difftime(now, last_try) < SENSOR_RESCAN_SEC) return 0;
+    last_try = now;
     g_nvml.state = -1;
     if (access("/proc/driver/nvidia/version", R_OK) != 0) return 0;   /* no NVIDIA driver: never dlopen */
     g_nvml.lib = dlopen("libnvidia-ml.so.1", RTLD_LAZY | RTLD_LOCAL);
@@ -2234,6 +2280,38 @@ static void draw_custom_screen(g15canvas *c, int screen_num) {
     for (int i = 0; i < cs->visualizer_count; i++) draw_visualizer_element(c, &cs->visualizers[i]);
 }
 
+/* The live loop publishes its CPU% (1x/s, tmpfs) so --preview can show
+   the same number without sleeping 50 ms for a second /proc/stat sample
+   -- the GUI renders previews synchronously, up to ~8x/s while dragging. */
+static const char *cpu_publish_path(void) {
+    static char path[256];
+    const char *runtime = getenv("XDG_RUNTIME_DIR");
+    snprintf(path, sizeof(path), "%s/g510lcd_cpu_pct", runtime ? runtime : "/tmp");
+    return path;
+}
+
+static void publish_cpu(void) {
+    char tmp[300];
+    snprintf(tmp, sizeof(tmp), "%s.tmp", cpu_publish_path());
+    FILE *f = fopen(tmp, "w");
+    if (!f) return;
+    fprintf(f, "%.2f\n", g_cpu_pct);
+    if (fclose(f) == 0) rename(tmp, cpu_publish_path());
+}
+
+/* 1 = got a fresh (< 3 s old) value from the live service into g_cpu_pct */
+static int read_published_cpu(void) {
+    struct stat st;
+    if (stat(cpu_publish_path(), &st) != 0 || difftime(time(NULL), st.st_mtime) > 3) return 0;
+    FILE *f = fopen(cpu_publish_path(), "r");
+    if (!f) return 0;
+    double v;
+    int ok = fscanf(f, "%lf", &v) == 1 && v >= 0 && v <= 100;
+    fclose(f);
+    if (ok) g_cpu_pct = v;
+    return ok;
+}
+
 /* Does custom screen `screen` (2-5) show any sensor starting with `prefix`? */
 static int screen_uses(int screen, const char *prefix) {
     if (screen < 2 || screen > 5) return 0;
@@ -2251,18 +2329,25 @@ static int screen_uses(int screen, const char *prefix) {
    fopen "w", i.e. IN_CLOSE_WRITE; filtered by name). Without inotify
    it degrades to the plain sleep it replaces. */
 static int g_screen_ifd = -1;
+static int g_screen_wd = -1;
+
+/* Watch the screen-state file itself (IN_CLOSE_WRITE: the buttons
+   listener rewrites it in place with fopen "w"). Watching the whole
+   runtime dir woke this daemon for every file any app closed there --
+   including the GUI's previews, ~8x/s while dragging. Created empty if
+   missing (read_screen() treats that as screen 0) so there is always
+   something to watch; re-added if it's ever replaced or deleted. */
+static void screen_watch_add(void) {
+    int fd = open(screen_state_path(), O_WRONLY | O_CREAT | O_CLOEXEC, 0644);   /* no O_TRUNC */
+    if (fd >= 0) close(fd);
+    g_screen_wd = inotify_add_watch(g_screen_ifd, screen_state_path(), IN_CLOSE_WRITE | IN_DELETE_SELF | IN_MOVE_SELF);
+}
 
 static void screen_watch_init(void) {
-    char dir[256];
-    snprintf(dir, sizeof(dir), "%s", screen_state_path());
-    char *slash = strrchr(dir, '/');
-    if (!slash) return;
-    *slash = 0;
     g_screen_ifd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
-    if (g_screen_ifd >= 0 && inotify_add_watch(g_screen_ifd, dir, IN_CLOSE_WRITE | IN_MOVED_TO) < 0) {
-        close(g_screen_ifd);
-        g_screen_ifd = -1;
-    }
+    if (g_screen_ifd < 0) return;
+    screen_watch_add();
+    if (g_screen_wd < 0) { close(g_screen_ifd); g_screen_ifd = -1; }
 }
 
 static long ms_until(const struct timespec *end) {
@@ -2279,7 +2364,6 @@ static void sleep_or_screen_change(long ms) {
     end.tv_sec += ms / 1000;
     end.tv_nsec += (ms % 1000) * 1000000L;
     if (end.tv_nsec >= 1000000000L) { end.tv_sec++; end.tv_nsec -= 1000000000L; }
-    const char *want = strrchr(screen_state_path(), '/') + 1;
     for (;;) {
         long left = ms_until(&end);
         if (left <= 0) return;
@@ -2287,13 +2371,18 @@ static void sleep_or_screen_change(long ms) {
         if (poll(&pfd, 1, (int)left) <= 0) continue;      /* timeout (loop ends) or EINTR */
         char buf[4096] __attribute__((aligned(__alignof__(struct inotify_event))));
         ssize_t len;
-        int hit = 0;
+        int hit = 0, rewatch = 0;
         while ((len = read(g_screen_ifd, buf, sizeof(buf))) > 0)
             for (char *q = buf; q < buf + len; ) {
                 struct inotify_event *ev = (struct inotify_event *)q;
-                if (ev->len && strcmp(ev->name, want) == 0) hit = 1;
+                if (ev->mask & IN_CLOSE_WRITE) hit = 1;
+                if (ev->mask & (IN_DELETE_SELF | IN_MOVE_SELF | IN_IGNORED)) rewatch = hit = 1;
                 q += sizeof(struct inotify_event) + ev->len;
             }
+        if (rewatch) {
+            if (g_screen_wd >= 0) inotify_rm_watch(g_screen_ifd, g_screen_wd);
+            screen_watch_add();
+        }
         if (hit) return;
     }
 }
@@ -2370,11 +2459,12 @@ int main(int argc, char **argv) {
            the LCD shows. Now media only when this screen shows it, and
            CPU% from two samples 50 ms apart only when it's displayed. */
         load_custom_screens();
-        if (screen == 0 || screen_uses(screen, "CPU_PCT")) {
+        if ((screen == 0 || screen_uses(screen, "CPU_PCT")) && !read_published_cpu()) {
+            /* live service not running: two samples of our own, 50 ms apart */
             update_cpu_percent();
             usleep(50000);
+            update_cpu_percent();
         }
-        update_cpu_percent();
         update_net_speed();
         if (screen_uses(screen, "MEDIA_")) update_media_info();
         viz_set_preview_placeholder();
@@ -2444,6 +2534,7 @@ int main(int argc, char **argv) {
         if (difftime(now_t, last_slow_update) >= 1.0) {
             update_cpu_percent();
             update_net_speed();
+            publish_cpu();
             /* MAXTEMP used to update only while the stats screen was shown */
             int t = get_cpu_temp_c();
             if (t > max_temp_seen) max_temp_seen = t;
@@ -2451,7 +2542,7 @@ int main(int argc, char **argv) {
             last_slow_update = now_t;
         }
         if (need_viz) update_visualizer();
-        else if (g_viz_pid > 0) viz_stop_capture(); /* left a visualizer screen: stop recording */
+        else if (g_viz_pid > 0 || g_viz_owns_file) viz_stop_capture(); /* left a visualizer screen: stop recording (or drop a dead parec's file) */
 
         if (screen == 1) {
             draw_clock_screen(&canvas);

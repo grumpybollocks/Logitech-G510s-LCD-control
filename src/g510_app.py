@@ -12,6 +12,7 @@ Phase 2: Custom Screens tab (AIDA64-style sensor dashboard builder for
          the L2-L5 buttons, with a live preview of the real LCD output).
 """
 import os
+import stat
 import sys
 import tempfile
 import json
@@ -1190,6 +1191,42 @@ def _estimated_size(el):
     return ELEMENT_HIT_W, ELEMENT_HIT_H
 
 
+_PREVIEW_DIR = None
+
+
+def _private_preview_dir():
+    """$XDG_RUNTIME_DIR (per-user, 0700) when set. Otherwise
+    /tmp/g510-lcd-<uid> -- but only if it's a real directory owned by us
+    and not group/world-accessible: mkdir(exist_ok=True) alone happily
+    accepted one another local user had pre-created. Anything else gets
+    a fresh private mkdtemp() dir for this run."""
+    global _PREVIEW_DIR
+    if _PREVIEW_DIR is not None:
+        return _PREVIEW_DIR
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if runtime and os.path.isdir(runtime):
+        _PREVIEW_DIR = Path(runtime)
+        return _PREVIEW_DIR
+    cand = Path(tempfile.gettempdir()) / f"g510-lcd-{os.getuid()}"
+    try:
+        cand.mkdir(mode=0o700)
+    except FileExistsError:
+        pass
+    except OSError:
+        cand = None
+    if cand is not None:
+        try:
+            st = os.lstat(cand)
+            ok = stat.S_ISDIR(st.st_mode) and st.st_uid == os.getuid() and not (st.st_mode & 0o077)
+        except OSError:
+            ok = False
+        if ok:
+            _PREVIEW_DIR = cand
+            return _PREVIEW_DIR
+    _PREVIEW_DIR = Path(tempfile.mkdtemp(prefix="g510-lcd-"))
+    return _PREVIEW_DIR
+
+
 def render_preview(screen_num, tag="app"):
     """Runs the same C binary that draws the real LCD, in one-shot
     --preview mode, and returns (QPixmap, bounds, err) -- the pixmap is
@@ -1209,10 +1246,7 @@ def render_preview(screen_num, tag="app"):
     # Private per-user dir (2026-11-10): this used to be a fixed name in
     # world-writable /tmp, which another local user could pre-create or
     # feed a crafted image/.meta through, and two users' GUIs shared it.
-    runtime = os.environ.get("XDG_RUNTIME_DIR")
-    base = Path(runtime) if runtime and Path(runtime).is_dir() else Path(tempfile.gettempdir()) / f"g510-lcd-{os.getuid()}"
-    base.mkdir(mode=0o700, exist_ok=True)
-    out_path = base / f"g510_app_preview_{tag}.ppm"
+    out_path = _private_preview_dir() / f"g510_app_preview_{tag}.ppm"
     meta_path = Path(str(out_path) + ".meta")
     try:
         result = subprocess.run(

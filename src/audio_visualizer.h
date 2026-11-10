@@ -123,7 +123,7 @@
 
 static volatile pid_t g_viz_pid = -1;  /* read by the signal handler */
 static time_t g_viz_started = 0;
-static int g_viz_owns_file = 0;        /* only the process that started parec may delete its file */
+static volatile sig_atomic_t g_viz_owns_file = 0;  /* only the process that started parec may delete its file */
 static time_t g_viz_retry_after = 0;   /* backoff after parec died or fork() failed */
 #define VIZ_RETRY_SEC 5
 static long g_viz_read_offset = 0;
@@ -178,11 +178,17 @@ static void viz_init_bar_freqs(void) {
     }
 }
 
+/* Built once (getenv + snprintf) and then only read, so the signal
+   handler can use it: re-entering snprintf on a shared buffer from a
+   handler is undefined behaviour. */
+static char g_viz_capture_path[256];
+
 static const char *viz_capture_path(void) {
-    static char path[256];
-    const char *runtime = getenv("XDG_RUNTIME_DIR");
-    snprintf(path, sizeof(path), "%s/g510lcd_viz_capture.raw", runtime ? runtime : "/tmp");
-    return path;
+    if (!g_viz_capture_path[0]) {
+        const char *runtime = getenv("XDG_RUNTIME_DIR");
+        snprintf(g_viz_capture_path, sizeof(g_viz_capture_path), "%s/g510lcd_viz_capture.raw", runtime ? runtime : "/tmp");
+    }
+    return g_viz_capture_path;
 }
 
 static void viz_start_capture(void) {
@@ -264,7 +270,7 @@ static void viz_stop_capture(void) {
 static void viz_signal_cleanup(int sig) {
     pid_t pid = g_viz_pid;
     if (pid > 0) kill(pid, SIGTERM);
-    if (g_viz_owns_file) unlink(viz_capture_path());
+    if (g_viz_owns_file && g_viz_capture_path[0]) unlink(g_viz_capture_path);  /* prebuilt: no snprintf here */
     signal(sig, SIG_DFL);
     raise(sig);
 }
@@ -307,6 +313,9 @@ static void update_visualizer(void) {
     if (g_viz_pid > 0 && waitpid(g_viz_pid, NULL, WNOHANG) == g_viz_pid) {
         g_viz_pid = -1;
         g_viz_retry_after = time(NULL) + VIZ_RETRY_SEC;
+        /* its file is stale now: drop it, or previews would keep showing
+           a frozen spectrum from it as if it were live audio */
+        if (g_viz_owns_file) { unlink(viz_capture_path()); g_viz_owns_file = 0; }
     }
     if (g_viz_pid <= 0) {
         if (time(NULL) >= g_viz_retry_after) viz_start_capture();

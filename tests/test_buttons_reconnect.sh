@@ -56,9 +56,11 @@ kill -0 "$PID" 2>/dev/null && ok "still running after disconnect (no exit, no sy
 
 # node that opens but fails every read: must NOT spin the CPU
 : > "$T/keys"
-t0=$(ticks); sleep 2; t1=$(ticks)
+l0=$(wc -l < "$T/err.log"); t0=$(ticks); sleep 2; t1=$(ticks); l1=$(wc -l < "$T/err.log")
 rm -f "$T/keys"
 [ $((t1 - t0)) -lt 20 ] && ok "open-but-unreadable node for 2 s: $((t1 - t0)) CPU ticks (no busy loop)" || bad "busy loop: $((t1 - t0)) ticks in 2 s"
+[ $((l1 - l0)) -le 4 ] && ok "flapping node for 2 s: $((l1 - l0)) log lines (backs off, no log spam)" || bad "log spam while flapping: $((l1 - l0)) lines in 2 s"
+grep -q "backing off" "$T/err.log" && ok "flapping is reported once" || bad "flapping not reported"
 
 mkfifo "$T/keys"                   # keyboard back
 press 699                          # L4
