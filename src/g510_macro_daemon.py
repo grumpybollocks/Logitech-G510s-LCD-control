@@ -33,6 +33,8 @@ if not _new_macros.exists() and _old_macros.exists():
     _new_macros.write_bytes(_old_macros.read_bytes())
 MACROS_FILE = _new_macros
 DEVICE_PATH = "/dev/g510-keys"
+DEVICE_NAME = "Logitech Gaming Keyboard Gaming Keys"  # what the udev rule matches on
+POLL_FAST_S, POLL_FAST_FOR_S, POLL_SLOW_S = 0.2, 10.0, 3.0
 
 G_KEY_CODES = {getattr(ecodes, f"KEY_MACRO{i}"): f"G{i}" for i in range(1, 19)}
 M_KEY_CODES = {
@@ -67,27 +69,47 @@ def load_macros():
     return {"M1": {}, "M2": {}, "M3": {}}
 
 
-def _wait_for_device(path, poll_seconds=3.0):
-    """Real bug found via direct reproduction: evdev.InputDevice(path)
-    used to run unguarded in main() -- if the keyboard isn't plugged in
-    yet (or the udev rule hasn't applied yet on a fresh boot, a real
-    race this project already accounts for elsewhere, e.g.
-    light_profile_led's own comment), that's a plain FileNotFoundError,
-    and with the systemd unit's Restart=on-failure/RestartSec=3, the
-    whole Python process gets killed and relaunched from scratch every
-    3 seconds, forever, until someone plugs the keyboard in. Waiting
-    here instead means the process starts once and just sits idle
-    until the device shows up -- no crash, no repeated interpreter
-    startup, no systemd restart spam in the journal."""
-    printed = False
+def _wait_for_device(path, disconnected=False):
+    """Wait for the Gaming Keys device -- at startup and after it drops off
+    USB mid-run. Mid-run drops are routine: the G510s re-enumerates every
+    time the headset jack is plugged/unplugged (USB ID c22e <-> c22d).
+    History: an unguarded evdev.InputDevice() at startup crashed with
+    FileNotFoundError and systemd relaunched the interpreter every 3 s
+    until the keyboard showed up; now it waits here, in one process.
+
+    Same rules as g510_lcd_buttons.c's wait_for_device():
+    - 200 ms polls for the first 10 s (G/M-keys back as soon as udev is
+      done), then 3 s, so a long unplug costs ~1 wakeup per 3 s;
+    - the opened node must really be the Gaming Keys interface (during
+      re-enumeration the old eventN number can briefly belong to another
+      interface before udev moves the link);
+    - the reason is logged whenever it changes, so "permission denied"
+      (not in the `input` group yet) doesn't look like an unplug."""
+    if disconnected:
+        print(f"keyboard disconnected -- waiting for {path}", flush=True)
+    reported = disconnected
+    last_reason = None
+    waited = 0.0
     while True:
         try:
-            return evdev.InputDevice(path)
-        except OSError:
-            if not printed:
-                print(f"{path} not found yet -- waiting for the keyboard to be plugged in...", flush=True)
-                printed = True
-            time.sleep(poll_seconds)
+            dev = evdev.InputDevice(path)
+            if dev.name == DEVICE_NAME:
+                if reported:
+                    print(f"{path} is back", flush=True)
+                return dev
+            dev.close()
+            reason = f"it points at a different input device ({dev.name!r}; udev still updating?)"
+        except OSError as e:
+            reason = e.strerror or str(e)
+            if isinstance(e, PermissionError):
+                reason += " -- your user must be in the 'input' group (log out and back in after being added)"
+        if reason != last_reason:
+            print(f"waiting for {path}: {reason}", flush=True)
+            last_reason = reason
+            reported = True
+        step = POLL_FAST_S if waited < POLL_FAST_FOR_S else POLL_SLOW_S
+        time.sleep(step)
+        waited += step
 
 
 def profile_path():
@@ -153,13 +175,28 @@ def main():
         active_profile = "M1"
     write_active_profile(active_profile)
     light_profile_led(active_profile)
-    last_mtime = pf.stat().st_mtime
+
+    def profile_mtime():
+        # write_active_profile() swallows write errors, so the file may not
+        # exist -- that used to be an uncaught FileNotFoundError right here.
+        try:
+            return pf.stat().st_mtime
+        except OSError:
+            return None
+
+    last_mtime = profile_mtime()
 
     def adopt_profile(name):
         nonlocal active_profile, last_mtime
         active_profile = name
         light_profile_led(active_profile)
-        last_mtime = pf.stat().st_mtime
+        last_mtime = profile_mtime()
+
+    # "command" macros run in the background (they used to block this whole
+    # loop until they exited -- a G-key that launches an app froze every
+    # other G/M-key until that app was closed). Kept here so finished ones
+    # are reaped instead of lingering as zombies.
+    running = []
 
     while True:
         # Real bug found by code review: an unplug mid-run raises OSError out of
@@ -176,8 +213,19 @@ def main():
             r, _, _ = select.select([dev.fd], [], [], 0.2)
             events = list(dev.read()) if r else []
         except OSError:
-            dev = _wait_for_device(DEVICE_PATH)
+            # close the dead handle (it used to leak one fd per disconnect),
+            # pause once (a half-removed node can open and fail every read
+            # at once), then wait for the keyboard to come back
+            try:
+                dev.close()
+            except OSError:
+                pass
+            time.sleep(POLL_FAST_S)
+            dev = _wait_for_device(DEVICE_PATH, disconnected=True)
             continue
+
+        if running:
+            running[:] = [p for p in running if p.poll() is None]
 
         if events:
             for event in events:
@@ -198,16 +246,19 @@ def main():
                     if isinstance(entry, str):  # legacy format, pre-command-support
                         subprocess.run(["ydotool", "key"] + entry.split())
                     elif entry.get("type") == "command":
-                        subprocess.run(entry["value"], shell=True)
+                        try:
+                            running.append(subprocess.Popen(entry["value"], shell=True,
+                                                            start_new_session=True))
+                        except OSError as e:
+                            print(f"{gkey}: could not start command: {e}", flush=True)
                     else:  # type == "keys"
                         subprocess.run(["ydotool", "key"] + entry["value"].split())
 
         # Pick up a GUI-initiated profile switch too -- the file's
         # mtime only moves when something (us, or the GUI) actually
         # writes it, so this is cheap to check every ~0.2s.
-        try:
-            mtime = pf.stat().st_mtime
-        except FileNotFoundError:
+        mtime = profile_mtime()
+        if mtime is None:
             continue
         if mtime != last_mtime:
             try:
