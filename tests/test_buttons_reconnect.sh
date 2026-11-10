@@ -39,7 +39,9 @@ with open(path, "wb") as f:
 }
 state() { cat "$T/g510lcd_screen" 2>/dev/null; }
 wait_state() { for _ in $(seq 50); do [ "$(state)" = "$1" ] && return 0; sleep 0.1; done; return 1; }
-ticks() { awk '{print $14+$15}' "/proc/$PID/stat" 2>/dev/null || echo 9999; }
+# (2026-11-11) "dead" if the process is gone -- a missing /proc entry used to
+# read 9999 twice, i.e. 0 ticks, and the busy-loop check passed on a crash.
+ticks() { [ -r "/proc/$PID/stat" ] && awk '{print $14+$15}' "/proc/$PID/stat" || echo dead; }
 
 HOME="$T" XDG_RUNTIME_DIR="$T" "$T/btn" 2> "$T/err.log" &
 PID=$!
@@ -58,7 +60,9 @@ kill -0 "$PID" 2>/dev/null && ok "still running after disconnect (no exit, no sy
 : > "$T/keys"
 l0=$(wc -l < "$T/err.log"); t0=$(ticks); sleep 2; t1=$(ticks); l1=$(wc -l < "$T/err.log")
 rm -f "$T/keys"
-[ $((t1 - t0)) -lt 20 ] && ok "open-but-unreadable node for 2 s: $((t1 - t0)) CPU ticks (no busy loop)" || bad "busy loop: $((t1 - t0)) ticks in 2 s"
+if [ "$t0" = dead ] || [ "$t1" = dead ]; then bad "the program died while the node was open-but-unreadable"
+elif [ $((t1 - t0)) -lt 20 ]; then ok "open-but-unreadable node for 2 s: $((t1 - t0)) CPU ticks (no busy loop)"
+else bad "busy loop: $((t1 - t0)) ticks in 2 s"; fi
 [ $((l1 - l0)) -le 4 ] && ok "flapping node for 2 s: $((l1 - l0)) log lines (backs off, no log spam)" || bad "log spam while flapping: $((l1 - l0)) lines in 2 s"
 grep -q "backing off" "$T/err.log" && ok "flapping is reported once" || bad "flapping not reported"
 

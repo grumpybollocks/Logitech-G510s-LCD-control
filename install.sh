@@ -31,6 +31,16 @@ if [ "$(id -u)" -eq 0 ]; then
 fi
 command -v sudo >/dev/null || { echo "This installer needs 'sudo' (for the system-wide steps). Install it, then re-run."; exit 1; }
 SUDO=sudo
+# The services are per-user (systemctl --user): without a user session bus that
+# step would fail only AFTER all the sudo steps -- check first.
+if ! systemctl --user show-environment >/dev/null 2>&1; then
+    echo "No user session here (systemctl --user doesn't work) -- run this from a terminal"
+    echo "in your normal desktop login, not via su or a bare ssh/sudo shell."
+    exit 1
+fi
+# The checkout path is written into systemd units (quoted there); these two
+# characters can't be quoted safely.
+case "$DIR" in *'"'*|*'\'*) echo "Please move the project to a folder whose path has no \" or \\ in it."; exit 1 ;; esac
 
 # ------------------------------------------------------------------ distro
 [ -r /etc/os-release ] && . /etc/os-release
@@ -62,7 +72,9 @@ case "$FAMILY" in
     debian) PKGS=(python3-pyqt5 python3-pil python3-evdev libfreetype-dev zenity playerctl pulseaudio-utils libusb-dev build-essential pkg-config cmake curl ca-certificates)
             # "install ok installed" only: `dpkg -s` also succeeds for removed-but-not-purged packages
             have() { dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'install ok installed'; }
-            inst() { $SUDO apt-get update -qq && $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"; } ;;
+            APT_UPDATED=0
+            apt_update_once() { [ "$APT_UPDATED" = 1 ] || { $SUDO apt-get update -qq || true; APT_UPDATED=1; }; }
+            inst() { apt_update_once && $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"; } ;;
     fedora) PKGS=(python3-qt5 python3-pillow python3-evdev freetype-devel zenity playerctl pulseaudio-utils libusb-compat-0.1-devel gcc make pkgconf-pkg-config cmake curl)
             have() { rpm -q "$1" &>/dev/null || rpm -q --whatprovides "$1" &>/dev/null; }
             inst() { $SUDO dnf install -y "$@"; } ;;
@@ -94,6 +106,11 @@ for pkg in "${PKGS[@]}"; do
     if have "$pkg"; then echo "  [ok]      $pkg"; else echo "  [missing] $pkg"; MISSING+=("$pkg"); fi
 done
 if [ ${#MISSING[@]} -gt 0 ]; then inst "${MISSING[@]}"; else echo "  All distro packages already installed."; fi
+# the audio visualizer records with parec (from libpulse on Arch)
+if [ "$FAMILY" = arch ] && ! command -v parec >/dev/null; then
+    echo "  [missing] parec (libpulse) -- needed by the audio visualizer"
+    inst libpulse
+fi
 
 # Arch: build tools are needed by the AUR build (step 2) and nm (TrueType check).
 # Same rule as before -- only installed if gcc/pkg-config/nm are missing -- just earlier.
@@ -165,7 +182,7 @@ if ! ydotool_ok; then
         debian)
             # use the distro's only if it's already 1.x (Ubuntu 24.04 ships 0.1.8, which can't).
             # Fresh lists first; strip a Debian epoch ("1:0.1.8-3" is 0.1.8).
-            $SUDO apt-get update -qq || true
+            apt_update_once
             cand=$(apt-cache policy ydotool 2>/dev/null | awk '/Candidate:/{print $2}')
             case "${cand#*:}" in
                 [1-9]*) inst ydotool || echo "  [warn] apt couldn't install ydotool $cand (see above) -- building it from source instead" ;;
@@ -226,6 +243,7 @@ Description=Starts ydotoold service (added by G510 install.sh)
 [Service]
 Type=simple
 Restart=always
+RestartSec=3
 ExecStart=$(command -v ydotoold)
 ExecReload=/usr/bin/kill -HUP \$MAINPID
 KillMode=process
@@ -249,7 +267,7 @@ convert_font() {
         echo "  [missing] g15fontconvert (comes with libg15render, step 2) -- skipping conversion."
     else
         echo "  Converting $1 -> $2"
-        g15fontconvert -s 8 -i "$1" -o "$2"
+        g15fontconvert -s 8 -i "$1" -o "$2" || echo "  [warn]    converting $1 failed -- $3 falls through to the next tier."
     fi
 }
 convert_font "$DIR/fonts/source-ttf/FONT.otf" "$DIR/fonts/lcd-label-8.fnt" "the primary label font"
@@ -270,10 +288,8 @@ echo "  [ok]      src/g510_lcd_stats, src/g510_lcd_buttons"
 echo "=== 6/8: udev rules + hwdb (needs sudo) ==="
 # The backlight-restore-on-hotplug script lives at a fixed system path udev can
 # always find (same path the PKGBUILD uses), whatever the checkout location.
-$SUDO mkdir -p /usr/lib/g510-lcd
-$SUDO cp scripts/restore-backlight.sh /usr/lib/g510-lcd/restore-backlight.sh
-$SUDO chmod 755 /usr/lib/g510-lcd/restore-backlight.sh
-sed "s|__PROJECT_DIR__|$DIR|g" udev/99-g510-lcd.rules | $SUDO tee /etc/udev/rules.d/99-g510-lcd.rules > /dev/null
+$SUDO install -Dm755 scripts/restore-backlight.sh /usr/lib/g510-lcd/restore-backlight.sh
+$SUDO install -Dm644 udev/99-g510-lcd.rules /etc/udev/rules.d/99-g510-lcd.rules
 $SUDO mkdir -p /etc/udev/hwdb.d
 $SUDO cp udev/91-g510-stop-to-playpause.hwdb /etc/udev/hwdb.d/91-g510-stop-to-playpause.hwdb
 $SUDO udevadm control --reload-rules
@@ -287,6 +303,8 @@ if id -nG "$USER" | tr ' ' '\n' | grep -qx input; then
     echo "  [ok]      $USER is in the 'input' group"
 else
     echo "  [adding]  $USER to the 'input' group (log out and back in afterwards)"
+    echo "            Good to know: this group lets programs you run read keyboards and send"
+    echo "            keystrokes -- that's what the G-keys and macros need."
     $SUDO usermod -aG input "$USER"
     NEED_RELOGIN=1
 fi
@@ -309,15 +327,32 @@ fi
 
 echo "=== 7/8: systemd --user services ==="
 mkdir -p ~/.config/systemd/user
-for svc in g510-lcd-stats g510-lcd-buttons g510-macro-daemon; do
-    sed "s|__PROJECT_DIR__|$DIR|g" "services/$svc.service" > ~/.config/systemd/user/"$svc.service"
+# Fill in this checkout's path. Not sed: '&' and '|' in a path would be taken as
+# sed syntax. The units quote the path (spaces are fine) and '%' is doubled
+# (systemd would read it as a specifier).
+render_unit() {
+    local content esc
+    content=$(<"$1")
+    esc=${DIR//%/%%}
+    shopt -u patsub_replacement 2>/dev/null || true   # bash 5.2+: keep '&' literal
+    printf '%s\n' "${content//__PROJECT_DIR__/$esc}" > "$2"
+}
+for svc in g510-lcd-stats g510-lcd-buttons g510-macro-daemon g510-backlight-restore; do
+    render_unit "services/$svc.service" ~/.config/systemd/user/"$svc.service"
 done
 systemctl --user daemon-reload
 systemctl --user enable --now ydotool.service || true   # starts properly once you're in 'input' (re-login)
 systemctl --user enable --now g510-lcd-stats.service g510-lcd-buttons.service g510-macro-daemon.service
+# On a re-run the programs were just rebuilt and the units rewritten -- restart,
+# or the old ones keep running until the next reboot.
+systemctl --user restart g510-lcd-stats.service g510-lcd-buttons.service g510-macro-daemon.service
+systemctl --user enable g510-backlight-restore.service
+systemctl --user start g510-backlight-restore.service || true   # colour now; again at every login
 
 echo "=== 8/8: Desktop shortcuts ==="
-mkdir -p "$HOME/Desktop" "$HOME/.local/share/applications"
+DESKTOP_DIR=$(xdg-user-dir DESKTOP 2>/dev/null || true)
+{ [ -z "$DESKTOP_DIR" ] || [ "$DESKTOP_DIR" = "$HOME" ]; } && DESKTOP_DIR="$HOME/Desktop"
+mkdir -p "$DESKTOP_DIR" "$HOME/.local/share/applications"
 
 # Open a script in whatever terminal this desktop has (KDE, GNOME, Xfce, ...).
 term_cmd() {
@@ -345,9 +380,9 @@ Exec=$4
 Icon=$5
 Terminal=false
 Categories=Utility;"
-    echo "$entry" > "$HOME/Desktop/$1.desktop"
-    chmod +x "$HOME/Desktop/$1.desktop"
-    command -v gio &>/dev/null && gio set "$HOME/Desktop/$1.desktop" metadata::trusted true 2>/dev/null || true
+    echo "$entry" > "$DESKTOP_DIR/$1.desktop"
+    chmod +x "$DESKTOP_DIR/$1.desktop"
+    command -v gio &>/dev/null && gio set "$DESKTOP_DIR/$1.desktop" metadata::trusted true 2>/dev/null || true
 
     echo "$entry" > "$HOME/.local/share/applications/$2.desktop"
     chmod +x "$HOME/.local/share/applications/$2.desktop"

@@ -1,0 +1,13 @@
+[Unit]
+Description=Restore the G510s backlight colour at login
+# (2026-11-11) The udev rule restores the colour on replug, but at boot it fires
+# before anyone is logged in, so nothing restored it until the next replug.
+# This runs the same script as YOU (it only reads your own saved colour, and the
+# LED files are writable by the 'input' group), every time you log in.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/g510-lcd/restore-backlight.sh %u
+
+[Install]
+WantedBy=default.target
