@@ -151,6 +151,13 @@ if ! grep -qsE 'KERNEL=="uinput".*GROUP="input"' /usr/lib/udev/rules.d/*.rules /
         | $SUDO tee /etc/udev/rules.d/80-g510-uinput.rules >/dev/null
     echo "  [added]   /dev/uinput access for the 'input' group"
 fi
+# That rule (static_node) is only applied when udev starts, i.e. at the next
+# boot -- so also apply it NOW, or ydotoold can't open /dev/uinput until a
+# reboot (a re-login isn't enough; found testing on Ubuntu 24.04).
+$SUDO modprobe uinput 2>/dev/null || true
+if [ -e /dev/uinput ] && [ "$(stat -c %G /dev/uinput)" != input ]; then
+    $SUDO chgrp input /dev/uinput && $SUDO chmod 0660 /dev/uinput && echo "  [ok]      /dev/uinput usable now (no reboot needed)"
+fi
 if ! systemctl --user cat ydotool.service &>/dev/null; then
     mkdir -p ~/.config/systemd/user
     cat > ~/.config/systemd/user/ydotool.service <<EOF
@@ -253,13 +260,13 @@ mkdir -p "$HOME/Desktop" "$HOME/.local/share/applications"
 # Open a script in whatever terminal this desktop has (KDE, GNOME, Xfce, ...).
 term_cmd() {
     local t
-    for t in konsole gnome-terminal kgx ptyxis xfce4-terminal mate-terminal tilix kitty alacritty xterm; do
+    for t in konsole gnome-terminal kgx ptyxis xfce4-terminal mate-terminal tilix kitty alacritty x-terminal-emulator xterm; do
         command -v "$t" >/dev/null || continue
         case "$t" in
             konsole)                    echo "konsole --noclose -e \"$1\"" ;;
             gnome-terminal|kgx|ptyxis)  echo "$t -- \"$1\"" ;;
             xfce4-terminal|mate-terminal) echo "$t -x \"$1\"" ;;
-            tilix|alacritty|xterm)      echo "$t -e \"$1\"" ;;
+            tilix|alacritty|x-terminal-emulator|xterm) echo "$t -e \"$1\"" ;;
             kitty)                      echo "kitty \"$1\"" ;;
         esac
         return
