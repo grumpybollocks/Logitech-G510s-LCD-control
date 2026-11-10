@@ -124,7 +124,10 @@ fi
 echo "=== 3/8: ydotool (replays G-key macros) ==="
 # Macros are stored as raw keycodes ("29:1 46:1 46:0 29:0"), which needs
 # ydotool 1.x with its ydotoold daemon. 0.1.x understands neither.
-ydotool_ok() { command -v ydotoold >/dev/null && ydotool key --help 2>&1 | grep -q 'keycode>:<pressed'; }
+# (Detected via ydotoold's own --help: "ydotool key --help" only answers when
+# the daemon is already running, so it can't be used before setup.)
+ydotool_ok() { command -v ydotool >/dev/null && command -v ydotoold >/dev/null && \
+               timeout 3 ydotoold --help 2>&1 | grep -q -- '--socket-path'; }
 if ! ydotool_ok && [ "$FAMILY" != debian ]; then inst ydotool || true; fi
 if ydotool_ok; then
     echo "  [ok]      ydotool 1.x"
