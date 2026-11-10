@@ -136,7 +136,8 @@ static int is_gaming_keys(FILE *f) {
     return strcmp(name, G510_KEYS_NAME) == 0;
 }
 
-/* disconnected = 1 after a mid-run device loss: say so, and say when it's back */
+/* disconnected = 1 after a mid-run device loss: say so, and say when it's
+   back (0 while flapping, so a flapping device isn't logged every cycle) */
 static FILE *wait_for_device(int disconnected) {
     int reported = disconnected;
     int last_err = 0;
@@ -174,6 +175,15 @@ int main(void) {
        (indices 696-700) and ignore repeats within DEBOUNCE_MS. */
     struct timespec last_press[701] = {0};
 
+    /* Flap guard: a node that reopens fine and then fails at once, over
+       and over, used to loop every 200 ms forever logging 2 lines each
+       time (systemd's StartLimitBurst used to stop that; nothing did any
+       more). A failure within FLAP_MS of reconnecting doubles the pause
+       (up to POLL_SLOW_MS) and is logged once, not every time. */
+    #define FLAP_MS 2000
+    struct timespec reconnected = {0, 0};
+    int flaps = 0;
+
     struct input_event ev;
     for (;;) {
         if (fread(&ev, sizeof(ev), 1, f) != 1) {
@@ -183,10 +193,19 @@ int main(void) {
                during re-enumeration the old node can still open and then
                fail every read at once, which would otherwise spin. */
             fclose(f);
-            usleep((useconds_t)POLL_FAST_MS * 1000);
-            f = wait_for_device(1);
+            if (reconnected.tv_sec && ms_since(&reconnected) < FLAP_MS) {
+                if (flaps++ == 0)
+                    fprintf(stderr, "g510-lcd-buttons: %s keeps failing right after reconnecting -- backing off\n", G510_KEYS_DEV);
+            } else {
+                flaps = 0;
+            }
+            long pause = (long)POLL_FAST_MS << (flaps < 4 ? flaps : 4);
+            usleep((useconds_t)(pause < POLL_SLOW_MS ? pause : POLL_SLOW_MS) * 1000);
+            f = wait_for_device(flaps == 0);
+            clock_gettime(CLOCK_MONOTONIC, &reconnected);
             continue;
         }
+        flaps = 0;
         if (ev.type != EV_KEY || ev.value != 1) continue; /* only key-down */
         if (ev.code < 696 || ev.code > 700) continue;
 
