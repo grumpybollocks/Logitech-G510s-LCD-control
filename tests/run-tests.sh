@@ -41,5 +41,10 @@ echo "== test_buttons_reconnect"
 [ "${PIPESTATUS[0]}" -eq 0 ] || rc=1
 echo
 
-[ $rc -eq 0 ] && echo "ALL C TESTS PASSED" || echo "SOME C TESTS FAILED"
+echo "== test_macro_wait"
+python3 -I ./test_macro_wait.py | sed 's/^/  /'
+[ "${PIPESTATUS[0]}" -eq 0 ] || rc=1
+echo
+
+[ $rc -eq 0 ] && echo "ALL TESTS PASSED" || echo "SOME TESTS FAILED"
 exit $rc
