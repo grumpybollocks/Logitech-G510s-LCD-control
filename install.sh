@@ -90,7 +90,7 @@ fi
 # -DPROJECT_DIR bakes in THIS checkout's absolute path so the binary
 # can find its own font/config files without any file in the repo
 # itself hardcoding a username or machine-specific location.
-gcc $(pkg-config --cflags freetype2) -DPROJECT_DIR="\"$DIR\"" src/g510_lcd_stats.c -o src/g510_lcd_stats -lg15render $(pkg-config --libs freetype2) -lm
+gcc $(pkg-config --cflags freetype2) -DPROJECT_DIR="\"$DIR\"" src/g510_lcd_stats.c -o src/g510_lcd_stats -lg15render $(pkg-config --libs freetype2) -lm -ldl
 gcc src/g510_lcd_buttons.c -o src/g510_lcd_buttons
 
 echo "=== 5/7: udev rules + hwdb (needs sudo) ==="
@@ -111,6 +111,19 @@ sed "s|__PROJECT_DIR__|$DIR|g" udev/99-g510-lcd.rules | sudo tee /etc/udev/rules
 sudo cp udev/91-g510-stop-to-playpause.hwdb /etc/udev/hwdb.d/91-g510-stop-to-playpause.hwdb
 sudo udevadm control --reload-rules
 sudo systemd-hwdb update
+
+# The LCD (hidraw, via the rule above), the G-keys (/dev/input/event*)
+# and the backlight LEDs are all group "input" -- a user outside that
+# group gets "Permission denied" on every one of them. Many distros
+# don't put desktop users in it by default.
+NEED_RELOGIN=0
+if id -nG "$USER" | tr ' ' '\n' | grep -qx input; then
+    echo "  [ok]      $USER is in the 'input' group"
+else
+    echo "  [adding]  $USER to the 'input' group (log out and back in afterwards)"
+    sudo usermod -aG input "$USER"
+    NEED_RELOGIN=1
+fi
 
 # Seed a default backlight color so the replug below (which
 # restore-backlight.sh runs on) actually shows something instead of
@@ -192,5 +205,13 @@ echo "=== Done ==="
 echo "One thing that can't be scripted: Brave's 'Plasma Integration' extension"
 echo "media-control feature needs to be manually disabled if you use"
 echo "Brave + media keys together (see G510_README.md, MEDIA KEYS FIX #2)."
+echo ""
+if [ "$NEED_RELOGIN" = 1 ]; then
+    echo "*** You were just added to the 'input' group: log out and back in"
+    echo "*** (or reboot) before the LCD, G-keys and backlight will work."
+    echo ""
+fi
+echo "Sensors this PC's LCD will show (N/A = not found -- see README 'Sensors'):"
+"$DIR/src/g510_lcd_stats" --sensors | sed -n '3,/^$/p'
 echo ""
 systemctl --user status g510-lcd-stats.service g510-lcd-buttons.service g510-macro-daemon.service --no-pager -l | head -30
