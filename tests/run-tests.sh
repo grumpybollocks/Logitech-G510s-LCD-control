@@ -33,10 +33,10 @@ else echo "  FAIL rule line(s) matching only one G510 USB ID:"; echo "$bad" | se
 # hwdb: each C22D match line needs a C22E twin with the same suffix, and vice versa
 hw=../udev/91-g510-stop-to-playpause.hwdb
 hwbad=""
-for m in $(grep -oiE '^evdev:input:b0003v046DpC22[DE][^ ]*' "$hw"); do
-    twin=$(echo "$m" | sed -E 's/(pC22)D/\1@/I; s/(pC22)E/\1D/I; s/(pC22)@/\1E/')
-    grep -qiF "$twin" "$hw" || hwbad="$hwbad $m"
-done
+while IFS= read -r m; do
+    twin=$(printf '%s' "$m" | sed -E 's/(pC22)D/\1@/I; s/(pC22)E/\1D/I; s/(pC22)@/\1E/I')
+    grep -qiF -- "$twin" "$hw" || hwbad="$hwbad $m"
+done < <(grep -oiE '^evdev:input:b0003v046DpC22[DE][^ ]*' "$hw")
 if [ -z "$hwbad" ] && grep -qiE 'pC22D' "$hw" && grep -qiE 'pC22E' "$hw"; then echo "  ok   every hwdb match exists for both c22d and c22e"
 else echo "  FAIL hwdb match without its twin:$hwbad"; rc=1; fi
 if command -v udevadm >/dev/null && udevadm verify --help >/dev/null 2>&1; then

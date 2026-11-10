@@ -40,7 +40,8 @@ if ! systemctl --user show-environment >/dev/null 2>&1; then
 fi
 # The checkout path is written into systemd units (quoted there); these two
 # characters can't be quoted safely.
-case "$DIR" in *'"'*|*'\'*) echo "Please move the project to a folder whose path has no \" or \\ in it."; exit 1 ;; esac
+# ($ too: systemd expands $VAR / $$ even inside a quoted ExecStart word.)
+case "$DIR" in *'"'*|*'\'*|*'$'*) echo "Please move the project to a folder whose path has no \", \\ or \$ in it."; exit 1 ;; esac
 
 # ------------------------------------------------------------------ distro
 [ -r /etc/os-release ] && . /etc/os-release
@@ -342,9 +343,9 @@ for svc in g510-lcd-stats g510-lcd-buttons g510-macro-daemon g510-backlight-rest
 done
 systemctl --user daemon-reload
 systemctl --user enable --now ydotool.service || true   # starts properly once you're in 'input' (re-login)
-systemctl --user enable --now g510-lcd-stats.service g510-lcd-buttons.service g510-macro-daemon.service
-# On a re-run the programs were just rebuilt and the units rewritten -- restart,
-# or the old ones keep running until the next reboot.
+systemctl --user enable g510-lcd-stats.service g510-lcd-buttons.service g510-macro-daemon.service
+# restart (not start): on a re-run the programs were just rebuilt and the units
+# rewritten, so running ones must be restarted; stopped ones simply start.
 systemctl --user restart g510-lcd-stats.service g510-lcd-buttons.service g510-macro-daemon.service
 systemctl --user enable g510-backlight-restore.service
 systemctl --user start g510-backlight-restore.service || true   # colour now; again at every login
