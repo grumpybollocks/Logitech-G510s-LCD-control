@@ -1,7 +1,7 @@
 # Logitech G510s for Linux
 
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
-![Platform: Arch Linux](https://img.shields.io/badge/platform-Arch%20Linux-1793d1.svg)
+![Platform: Arch | Ubuntu](https://img.shields.io/badge/platform-Arch%20%7C%20Ubuntu%2FDebian-1793d1.svg)
 ![Languages: C + Python](https://img.shields.io/badge/code-C%20%2B%20Python%203-informational.svg)
 
 **The LCD screen, RGB backlight and G-key macros of the Logitech G510 /
@@ -54,23 +54,43 @@ unplug and replug the keyboard once.
 
 | | |
 | --- | --- |
-| **Linux** | An Arch-based distro (Arch, Manjaro, EndeavourOS, Garuda…). The installer uses `pacman` and an AUR helper (`yay` or `paru` — install one first). On other distros the programs run, but you'd install the dependencies and do the installer's steps by hand (`libg15`/`libg15render` from source). |
+| **Linux** | See [Which Linux](#which-linux) below — Arch and Ubuntu are tested. |
 | **Keyboard** | Logitech G510 or G510s, with or without a headset plugged in. |
 | **Kernel** | A recent one: the keyboard uses the kernel's own `hid-lg-g15` driver, and colour control needs `/sys/class/leds/g15::kbd_backlight/multi_intensity` (developed on 7.x). |
 | **Permissions** | Your user in the `input` group. The installer adds you if needed — log out and back in afterwards. |
 | **Audio** | PipeWire (with `pipewire-pulse`) for the visualizer. |
-| **Desktop** | Anything. Two of the desktop shortcuts open `konsole`/`dolphin` (KDE); edit those two elsewhere. |
+| **Desktop** | Anything (KDE, GNOME, Xfce…): the shortcuts open whatever terminal and file manager you have. |
+
+### Which Linux
+
+| Linux | Status |
+| --- | --- |
+| **Arch family** — Arch, Manjaro, EndeavourOS, Garuda, CachyOS… | ✅ Tested (daily use). Needs an AUR helper (`yay` or `paru`) — install one first. |
+| **Ubuntu 24.04** | ✅ Tested end to end on a fresh install: installer, services, a real macro keystroke, after a reboot. |
+| Other **Debian family** — Debian, Mint, Pop!_OS… | Should work (same steps as Ubuntu), not tested yet. |
+| **Fedora**, **openSUSE** | The installer tries the same steps with `dnf`/`zypper` — not tested yet. Reports welcome. |
+
+Where a distro doesn't package something, the installer builds it from
+the exact release Arch uses, and refuses to if the download's checksum
+doesn't match. These go to `/usr/local` and never replace distro files:
+
+- **`libg15` + `libg15render` 1.3.1** (the LCD library) — everywhere except Arch, where they come from the AUR.
+- **`ydotool` 1.0.4** — only if the distro's is too old to replay macros
+  (Ubuntu 24.04 ships 0.1.8, which can't). It also adds ydotool's user
+  service and `/dev/uinput` access when the distro doesn't ship them.
 
 What the installer adds, and why:
 
-| Package | For |
-| --- | --- |
-| `python-pyqt5`, `python-pillow`, `python-evdev` | the app, image import, reading the G-keys |
-| `ydotool` | replaying macro keystrokes |
-| `freetype2` | the LCD's label font |
-| `playerctl` | song title / artist / time for the media sensors |
-| `zenity` | the "restarted" popup from the Start shortcut |
-| `libg15`, `libg15render` (AUR) | the LCD drawing library everything is built on |
+| Needed for | Arch package | Ubuntu/Debian package |
+| --- | --- | --- |
+| the app, image import, reading the G-keys | `python-pyqt5`, `python-pillow`, `python-evdev` | `python3-pyqt5`, `python3-pil`, `python3-evdev` |
+| replaying macro keystrokes | `ydotool` | built from source (see above) |
+| the LCD's label font | `freetype2` | `libfreetype-dev` |
+| song title / artist / time | `playerctl` | `playerctl` |
+| the audio visualizer | `libpulse` (`parec`) | `pulseaudio-utils` |
+| the "restarted" popup | `zenity` | `zenity` |
+| building the C programs | `base-devel`, `pkgconf` | `build-essential`, `pkg-config`, `libusb-dev`, `cmake` |
+| the LCD drawing library | `libg15`, `libg15render` (AUR) | built from source (see above) |
 
 ## Sensors: what shows up on which hardware
 
