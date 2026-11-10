@@ -22,6 +22,7 @@
 #include <sys/statvfs.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <dlfcn.h>
 
 /* LCD device node (stable udev symlink). Overridable ONLY at build time,
    so tests can exercise the "device missing" path without unplugging
@@ -197,30 +198,35 @@ static void get_ram_kb(long *used_kb, long *total_kb) {
     *used_kb = mem_total - mem_avail;
 }
 
-static int read_hwmon_temp_c(const char *path); /* defined below (v1.1 section); reused here */
+/* ---- Sensor discovery (portable across hardware, 2026-11-10) -------
+   History: 2026-11-02 replaced hard-coded hwmon2/3/4 + card1 with lookup
+   by driver name (numbers are handed out in probe order and USB devices
+   take them too), but every sensor still knew exactly ONE driver --
+   k10temp, amdgpu, gigabyte_wmi -- so on an Intel CPU, an NVIDIA/Intel
+   GPU or any non-Gigabyte board those readings were just missing.
 
-/* Sensor directories are looked up by DRIVER NAME, not by number.
-   Real latent bug found in a 2026-11-02 audit: these were hard-coded as
-   hwmon2 (amdgpu), hwmon3 (k10temp), hwmon4 (gigabyte_wmi) and card1.
-   Those numbers are handed out in driver-probe order at boot, and USB
-   devices register hwmon entries too (the MX Master's hidpp_battery is
-   hwmon6 on this machine), so a different probe order would make the
-   LCD silently show the wrong sensor. The mapping was correct on the
-   day of the audit; this keeps it correct. A found path is re-verified
-   every 30 s (one tiny sysfs read) so a replug/driver reload that
-   reuses a number for a different device can't silently swap sensors.
-   Not found -> NULL -> callers show the same "no reading" they always
-   showed for a missing file. */
-typedef struct {
-    const char *want;   /* hwmon "name" file content, or DRM driver name */
-    char dir[320];
-    time_t checked;
-} sysfs_lookup_t;
+   Now:
+   - every sensor has a priority list of drivers covering the common
+     desktop/laptop hardware (lists below -- add a name to support more);
+   - inside a CPU sensor the package channel is picked by its label
+     ("Package id 0" on Intel, "Tctl" on AMD...), not assumed to be temp1;
+   - the GPU is the card with the MOST VRAM, so an APU's iGPU never wins
+     over the real graphics card, and its temperatures come from the
+     hwmon of THAT card (two amdgpu devices can't mix up any more);
+   - NVIDIA's proprietary driver has no sysfs sensors at all, so it is
+     read through NVML (libnvidia-ml, shipped with the driver), loaded at
+     run time with dlopen -- no build dependency, nothing loaded on
+     machines without an NVIDIA driver. Same approach btop uses;
+   - a GPU in runtime suspend (hybrid laptops) is NOT read, so the LCD
+     can't keep a sleeping dGPU awake;
+   - anything still not found shows "N/A" instead of a bogus number.
+   `g510_lcd_stats --sensors` prints what was picked on this machine.
+   Lookups are re-resolved at most every 30 s (a few dozen tiny sysfs
+   reads), so a replug or late-loading driver is picked up, and a
+   missing sensor costs one rescan per 30 s. */
 
-static sysfs_lookup_t g_hwmon_cpu   = {"k10temp", "", 0};
-static sysfs_lookup_t g_hwmon_gpu   = {"amdgpu", "", 0};
-static sysfs_lookup_t g_hwmon_board = {"gigabyte_wmi", "", 0};
-static sysfs_lookup_t g_drm_gpu     = {"amdgpu", "", 0};
+static const char *g_sysfs = "/sys";   /* tests point this at a fake tree */
+#define SENSOR_RESCAN_SEC 30
 
 static int read_sysfs_word(const char *path, char *out, size_t outlen) {
     if (outlen < 2) return 0;
@@ -234,90 +240,427 @@ static int read_sysfs_word(const char *path, char *out, size_t outlen) {
     return 1;
 }
 
-static int hwmon_matches(const char *dir, const char *want) {
-    char p[352], name[48];
-    snprintf(p, sizeof(p), "%s/name", dir);
-    return read_sysfs_word(p, name, sizeof(name)) && strcmp(name, want) == 0;
+static unsigned long long read_sysfs_ull(const char *path) {
+    FILE *f = fopen(path, "r");
+    if (!f) return 0;
+    unsigned long long v = 0;
+    if (fscanf(f, "%llu", &v) != 1) v = 0;
+    fclose(f);
+    return v;
 }
 
-static const char *hwmon_dir(sysfs_lookup_t *c) {
+/* millidegrees file -> whole degrees C, or -1 when missing/unreadable or
+   outside 1..124 C: unconnected Super-I/O inputs report junk like -128,
+   0, 127 or 255, which is "no sensor", not a temperature. */
+static int read_hwmon_temp_c(const char *path) {
+    FILE *f = fopen(path, "r");
+    if (!f) return -1;
+    int millideg = 0;
+    int ok = fscanf(f, "%d", &millideg) == 1;
+    fclose(f);
+    if (!ok) return -1;
+    int c = millideg / 1000;
+    return (c >= 1 && c <= 124) ? c : -1;
+}
+
+/* "nct6*" = prefix match, anything else = exact match. */
+static int sensor_name_matches(const char *name, const char *pat) {
+    size_t n = strlen(pat);
+    if (n && pat[n - 1] == '*') return strncmp(name, pat, n - 1) == 0;
+    return strcmp(name, pat) == 0;
+}
+
+/* CPU: AMD (k10temp; zenpower = popular out-of-tree replacement), Intel
+   (coretemp), ARM/Raspberry Pi/SoC thermal drivers. */
+static const char *const CPU_HWMON[] = {
+    "k10temp", "zenpower", "coretemp", "cpu_thermal", "cpu-thermal", "soc_thermal", NULL };
+/* the whole-package reading, best first; none found -> temp1 */
+static const char *const CPU_LABELS[] = {
+    "Package id", "Tctl", "Tdie", "SoC Temperature", "CPU", NULL };
+/* fallback when no CPU hwmon driver is loaded: thermal-zone types */
+static const char *const CPU_THERMAL[] = {
+    "x86_pkg_temp", "cpu-thermal", "cpu_thermal", "soc_thermal", "cpu0-thermal", NULL };
+/* Motherboard: vendor WMI/EC drivers first (they read the same chip but
+   through the BIOS, safely), then the Super-I/O chips almost every
+   desktop board uses (Nuvoton nct67xx/nct66xx, ITE it87xx, Winbond,
+   Fintek), then laptop/OEM embedded controllers. */
+static const char *const BOARD_HWMON[] = {
+    "gigabyte_wmi", "asus_wmi_sensors", "asusec", "nct6*", "it8*", "w83*", "f71*",
+    "dell_smm", "thinkpad", "hp", NULL };
+/* GPU drivers this knows; also the tie-break order when VRAM is equal */
+static const char *const GPU_DRIVERS[] = {
+    "amdgpu", "nvidia", "xe", "nouveau", "radeon", "i915", NULL };
+
+typedef struct {
+    const char *const *wants;   /* hwmon "name" patterns, best first */
+    const char *const *labels;  /* preferred tempN_label prefixes (NULL = temp1) */
+    char dir[320];
+    char name[48];              /* the hwmon name that actually matched */
+    int chan;                   /* tempN chosen via `labels` */
+    time_t checked;
+} hwmon_lookup_t;
+
+static hwmon_lookup_t g_hwmon_cpu   = {CPU_HWMON, CPU_LABELS, "", "", 1, 0};
+static hwmon_lookup_t g_hwmon_board = {BOARD_HWMON, NULL, "", "", 1, 0};
+
+static int hwmon_pick_chan(const char *dir, const char *const *labels) {
+    if (!labels) return 1;
+    char p[352], lab[64];
+    for (int i = 0; labels[i]; i++)
+        for (int n = 1; n <= 32; n++) {
+            snprintf(p, sizeof(p), "%s/temp%d_label", dir, n);
+            if (read_sysfs_word(p, lab, sizeof(lab)) &&
+                strncmp(lab, labels[i], strlen(labels[i])) == 0) return n;
+        }
+    return 1;
+}
+
+static const char *hwmon_dir(hwmon_lookup_t *c) {
     time_t now = time(NULL);
-    if (c->checked && difftime(now, c->checked) < 30) return c->dir[0] ? c->dir : NULL; /* cached hit OR cached miss */
-    if (c->dir[0] && hwmon_matches(c->dir, c->want)) { c->checked = now; return c->dir; }
-    c->dir[0] = 0;
-    c->checked = now; /* also rate-limits rescans while the sensor is missing */
-    DIR *d = opendir("/sys/class/hwmon");
-    if (!d) return NULL;
-    struct dirent *e;
-    while ((e = readdir(d))) {
-        if (strncmp(e->d_name, "hwmon", 5) != 0) continue;
-        char cand[320];
-        snprintf(cand, sizeof(cand), "/sys/class/hwmon/%s", e->d_name);
-        if (hwmon_matches(cand, c->want)) { snprintf(c->dir, sizeof(c->dir), "%s", cand); break; }
-    }
-    closedir(d);
-    return c->dir[0] ? c->dir : NULL;
-}
-
-/* drm "cardN/device" whose kernel driver is c->want (only plain cardN
-   entries -- cardN-DP-1 etc. are connectors) and that exposes VRAM info. */
-static int drm_matches(const char *devdir, const char *want) {
-    char p[352], link[512], vram[352];
-    snprintf(p, sizeof(p), "%s/driver", devdir);
-    ssize_t n = readlink(p, link, sizeof(link) - 1);
-    if (n <= 0) return 0;
-    link[n] = 0;
-    const char *base = strrchr(link, '/');
-    base = base ? base + 1 : link;
-    snprintf(vram, sizeof(vram), "%s/mem_info_vram_total", devdir);
-    return strcmp(base, want) == 0 && access(vram, R_OK) == 0;
-}
-
-static const char *drm_device_dir(sysfs_lookup_t *c) {
-    time_t now = time(NULL);
-    if (c->checked && difftime(now, c->checked) < 30) return c->dir[0] ? c->dir : NULL; /* cached hit OR cached miss */
-    if (c->dir[0] && drm_matches(c->dir, c->want)) { c->checked = now; return c->dir; }
-    c->dir[0] = 0;
+    if (c->checked && difftime(now, c->checked) < SENSOR_RESCAN_SEC) return c->dir[0] ? c->dir : NULL;
     c->checked = now;
-    DIR *d = opendir("/sys/class/drm");
-    if (!d) return NULL;
-    struct dirent *e;
-    while ((e = readdir(d))) {
-        const char *s = e->d_name;
-        if (strncmp(s, "card", 4) != 0 || !s[4] || strspn(s + 4, "0123456789") != strlen(s + 4)) continue;
-        char cand[320];
-        snprintf(cand, sizeof(cand), "/sys/class/drm/%s/device", s);
-        if (drm_matches(cand, c->want)) { snprintf(c->dir, sizeof(c->dir), "%s", cand); break; }
+    c->dir[0] = 0; c->name[0] = 0; c->chan = 1;
+    char root[288];
+    snprintf(root, sizeof(root), "%s/class/hwmon", g_sysfs);
+    for (int i = 0; c->wants[i] && !c->dir[0]; i++) {
+        DIR *d = opendir(root);
+        if (!d) return NULL;
+        struct dirent *e;
+        int best = -1;
+        char name[48];
+        while ((e = readdir(d))) {
+            if (strncmp(e->d_name, "hwmon", 5) != 0) continue;
+            int num = atoi(e->d_name + 5);
+            if (best >= 0 && num >= best) continue;       /* lowest number wins: deterministic */
+            char p[352];
+            if (snprintf(p, sizeof(p), "%s/%s/name", root, e->d_name) >= (int)sizeof(p)) continue;
+            if (!read_sysfs_word(p, name, sizeof(name)) || !sensor_name_matches(name, c->wants[i])) continue;
+            char cand[sizeof(c->dir)];
+            if (snprintf(cand, sizeof(cand), "%s/%s", root, e->d_name) >= (int)sizeof(cand)) continue;
+            best = num;
+            memcpy(c->dir, cand, sizeof(cand));
+            snprintf(c->name, sizeof(c->name), "%s", name);
+        }
+        closedir(d);
     }
-    closedir(d);
+    if (c->dir[0]) c->chan = hwmon_pick_chan(c->dir, c->labels);
     return c->dir[0] ? c->dir : NULL;
 }
 
-/* tempN_input of a looked-up hwmon device; -1 (same as a missing file) if not found. */
-static int hwmon_temp_c(sysfs_lookup_t *c, int n) {
+/* tempN_input of a looked-up hwmon device (n <= 0 -> its chosen channel). */
+static int hwmon_temp_c(hwmon_lookup_t *c, int n) {
     const char *dir = hwmon_dir(c);
     if (!dir) return -1;
     char path[352];
-    snprintf(path, sizeof(path), "%s/temp%d_input", dir, n);
+    snprintf(path, sizeof(path), "%s/temp%d_input", dir, n > 0 ? n : c->chan);
     return read_hwmon_temp_c(path);
 }
 
-static int get_cpu_temp_c(void) {
-    return hwmon_temp_c(&g_hwmon_cpu, 1);
+typedef struct { char path[320]; char type[48]; time_t checked; } thermal_lookup_t;
+static thermal_lookup_t g_thermal_cpu;
+
+static const char *thermal_cpu_path(void) {
+    thermal_lookup_t *c = &g_thermal_cpu;
+    time_t now = time(NULL);
+    if (c->checked && difftime(now, c->checked) < SENSOR_RESCAN_SEC) return c->path[0] ? c->path : NULL;
+    c->checked = now;
+    c->path[0] = 0; c->type[0] = 0;
+    char root[288];
+    snprintf(root, sizeof(root), "%s/class/thermal", g_sysfs);
+    for (int i = 0; CPU_THERMAL[i] && !c->path[0]; i++) {
+        DIR *d = opendir(root);
+        if (!d) return NULL;
+        struct dirent *e;
+        while ((e = readdir(d)) && !c->path[0]) {
+            if (strncmp(e->d_name, "thermal_zone", 12) != 0) continue;
+            char p[352], type[48];
+            if (snprintf(p, sizeof(p), "%s/%s/type", root, e->d_name) >= (int)sizeof(p)) continue;
+            if (!read_sysfs_word(p, type, sizeof(type)) || strcmp(type, CPU_THERMAL[i]) != 0) continue;
+            if (snprintf(c->path, sizeof(c->path), "%s/%s/temp", root, e->d_name) >= (int)sizeof(c->path)) { c->path[0] = 0; continue; }
+            snprintf(c->type, sizeof(c->type), "%s", type);
+        }
+        closedir(d);
+    }
+    return c->path[0] ? c->path : NULL;
 }
 
+static int get_cpu_temp_c(void) {
+    if (hwmon_dir(&g_hwmon_cpu)) return hwmon_temp_c(&g_hwmon_cpu, 0);
+    const char *p = thermal_cpu_path();
+    return p ? read_hwmon_temp_c(p) : -1;
+}
+
+/* --- NVIDIA (proprietary driver) via NVML, loaded at run time ---
+   Types/symbols match NVIDIA's nvml.h (and btop's dlopen loader). */
+typedef int nvml_ret_t;
+typedef void *nvml_dev_t;
+typedef struct { unsigned int gpu, memory; } nvml_util_t;
+typedef struct { unsigned long long total, free, used; } nvml_mem_t;
+#define NVML_TEMPERATURE_GPU 0
+
+static struct {
+    int state;                  /* 0 untried, 1 ready, -1 unavailable */
+    void *lib;
+    nvml_dev_t dev;
+    nvml_ret_t (*get_temp)(nvml_dev_t, int, unsigned int *);
+    nvml_ret_t (*get_util)(nvml_dev_t, nvml_util_t *);
+    nvml_ret_t (*get_mem)(nvml_dev_t, nvml_mem_t *);
+    time_t polled;
+    int temp, busy;             /* -1 = no reading */
+    unsigned long long used, total;
+} g_nvml;
+
+static void *nvml_sym(const char *a, const char *b) {
+    void *s = dlsym(g_nvml.lib, a);
+    return (s || !b) ? s : dlsym(g_nvml.lib, b);
+}
+
+static int nvml_ready(void) {
+    if (g_nvml.state) return g_nvml.state > 0;
+    g_nvml.state = -1;
+    if (access("/proc/driver/nvidia/version", R_OK) != 0) return 0;   /* no NVIDIA driver: never dlopen */
+    g_nvml.lib = dlopen("libnvidia-ml.so.1", RTLD_LAZY | RTLD_LOCAL);
+    if (!g_nvml.lib) g_nvml.lib = dlopen("libnvidia-ml.so", RTLD_LAZY | RTLD_LOCAL);
+    if (!g_nvml.lib) return 0;
+    nvml_ret_t (*init)(void);
+    nvml_ret_t (*by_index)(unsigned int, nvml_dev_t *);
+    *(void **)(&init)              = nvml_sym("nvmlInit_v2", "nvmlInit");
+    *(void **)(&by_index)          = nvml_sym("nvmlDeviceGetHandleByIndex_v2", "nvmlDeviceGetHandleByIndex");
+    *(void **)(&g_nvml.get_temp)   = nvml_sym("nvmlDeviceGetTemperature", NULL);
+    *(void **)(&g_nvml.get_util)   = nvml_sym("nvmlDeviceGetUtilizationRates", NULL);
+    *(void **)(&g_nvml.get_mem)    = nvml_sym("nvmlDeviceGetMemoryInfo", NULL);
+    if (!init || !by_index || !g_nvml.get_temp || !g_nvml.get_util || !g_nvml.get_mem ||
+        init() != 0 || by_index(0, &g_nvml.dev) != 0) {
+        dlclose(g_nvml.lib); g_nvml.lib = NULL;
+        return 0;
+    }
+    g_nvml.state = 1;
+    return 1;
+}
+
+/* one NVML read per second at most, shared by every NVIDIA value */
+static int nvml_poll(void) {
+    if (!nvml_ready()) return 0;
+    time_t now = time(NULL);
+    if (g_nvml.polled == now) return 1;
+    g_nvml.polled = now;
+    unsigned int t = 0; nvml_util_t u; nvml_mem_t m;
+    g_nvml.temp = g_nvml.get_temp(g_nvml.dev, NVML_TEMPERATURE_GPU, &t) == 0 ? (int)t : -1;
+    g_nvml.busy = g_nvml.get_util(g_nvml.dev, &u) == 0 ? (int)u.gpu : -1;
+    if (g_nvml.get_mem(g_nvml.dev, &m) == 0) { g_nvml.used = m.used; g_nvml.total = m.total; }
+    else { g_nvml.used = 0; g_nvml.total = 0; }
+    return 1;
+}
+
+/* --- GPU choice --- */
+typedef struct {
+    char dev[320];                  /* <sysfs>/class/drm/cardN/device; "" = NVML without a DRM card */
+    char hwmon[352];                /* that card's own hwmon dir, "" if none */
+    char driver[32];                /* "" = no supported GPU found */
+    unsigned long long vram_total;  /* bytes, 0 = unknown/shared memory */
+    int chan[3];                    /* tempN for edge / hotspot / vram, 0 = not available */
+    time_t checked;
+} gpu_lookup_t;
+static gpu_lookup_t g_gpu;
+
+static int gpu_driver_rank(const char *drv) {
+    for (int i = 0; GPU_DRIVERS[i]; i++) if (strcmp(drv, GPU_DRIVERS[i]) == 0) return i;
+    return -1;
+}
+
+static void gpu_pick_channels(gpu_lookup_t *g) {
+    g->chan[0] = g->chan[1] = g->chan[2] = 0;
+    if (!g->hwmon[0]) return;
+    if (strcmp(g->driver, "amdgpu") == 0) {
+        static const char *const lab[3] = {"edge", "junction", "mem"};
+        char p[400], l[32];
+        for (int k = 0; k < 3; k++) {
+            g->chan[k] = k + 1;                      /* amdgpu's fixed order if labels are absent */
+            for (int n = 1; n <= 8; n++) {
+                snprintf(p, sizeof(p), "%s/temp%d_label", g->hwmon, n);
+                if (read_sysfs_word(p, l, sizeof(l)) && strcmp(l, lab[k]) == 0) { g->chan[k] = n; break; }
+            }
+        }
+    } else if (strcmp(g->driver, "xe") == 0) {
+        g->chan[0] = 2; g->chan[2] = 3;              /* xe ABI: temp2 = package, temp3 = VRAM */
+    } else {
+        g->chan[0] = 1;                              /* nouveau / radeon / i915: one GPU temp */
+    }
+}
+
+static const gpu_lookup_t *gpu_get(void) {
+    gpu_lookup_t *g = &g_gpu;
+    time_t now = time(NULL);
+    if (g->checked && difftime(now, g->checked) < SENSOR_RESCAN_SEC) return g->driver[0] ? g : NULL;
+    memset(g, 0, sizeof(*g));
+    g->checked = now;
+    int best_rank = 99, saw_nvidia_card = 0;
+    char root[288];
+    snprintf(root, sizeof(root), "%s/class/drm", g_sysfs);
+    DIR *d = opendir(root);
+    struct dirent *e;
+    while (d && (e = readdir(d))) {
+        const char *s = e->d_name;           /* plain cardN only; cardN-DP-1 etc. are connectors */
+        if (strncmp(s, "card", 4) != 0 || !s[4] || strspn(s + 4, "0123456789") != strlen(s + 4)) continue;
+        char dev[320], p[352], link[512];
+        if (snprintf(dev, sizeof(dev), "%s/%s/device", root, s) >= (int)sizeof(dev)) continue;
+        snprintf(p, sizeof(p), "%s/driver", dev);
+        ssize_t n = readlink(p, link, sizeof(link) - 1);
+        if (n <= 0) continue;
+        link[n] = 0;
+        const char *drv = strrchr(link, '/');
+        drv = drv ? drv + 1 : link;
+        int rank = gpu_driver_rank(drv);
+        if (rank < 0) continue;   /* (known names are all short, so the copy below never truncates) */
+        unsigned long long vram = 0;
+        if (strcmp(drv, "amdgpu") == 0) {
+            snprintf(p, sizeof(p), "%s/mem_info_vram_total", dev);
+            vram = read_sysfs_ull(p);
+        } else if (strcmp(drv, "nvidia") == 0) {
+            saw_nvidia_card = 1;
+            if (nvml_poll()) vram = g_nvml.total;
+        }
+        if (g->driver[0] && (vram < g->vram_total || (vram == g->vram_total && rank >= best_rank))) continue;
+        best_rank = rank;
+        g->vram_total = vram;
+        snprintf(g->dev, sizeof(g->dev), "%s", dev);
+        (void)!snprintf(g->driver, sizeof(g->driver), "%s", drv);
+    }
+    if (d) closedir(d);
+    /* NVIDIA without nvidia-drm (no DRM card at all) -- NVML still works */
+    if (!saw_nvidia_card && nvml_poll() && (!g->driver[0] || g_nvml.total > g->vram_total)) {
+        g->dev[0] = 0;
+        snprintf(g->driver, sizeof(g->driver), "nvidia");
+        g->vram_total = g_nvml.total;
+    }
+    if (g->dev[0]) {
+        char hp[352];
+        snprintf(hp, sizeof(hp), "%s/hwmon", g->dev);
+        DIR *h = opendir(hp);
+        while (h && (e = readdir(h)))
+            if (strncmp(e->d_name, "hwmon", 5) == 0) {
+                if (snprintf(g->hwmon, sizeof(g->hwmon), "%s/%s", hp, e->d_name) >= (int)sizeof(g->hwmon)) g->hwmon[0] = 0;
+                break;
+            }
+        if (h) closedir(h);
+    }
+    gpu_pick_channels(g);
+    return g->driver[0] ? g : NULL;
+}
+
+/* A runtime-suspended GPU (hybrid laptops) is left asleep: no reading. */
+static int gpu_awake(const gpu_lookup_t *g) {
+    if (!g->dev[0]) return 1;
+    char p[352], s[24];
+    snprintf(p, sizeof(p), "%s/power/runtime_status", g->dev);
+    return !(read_sysfs_word(p, s, sizeof(s)) && strcmp(s, "suspended") == 0);
+}
+
+static int gpu_is(const gpu_lookup_t *g, const char *drv) { return strcmp(g->driver, drv) == 0; }
+
+/* which: 0 = main/edge, 1 = hotspot/junction, 2 = VRAM.  -1 = no reading. */
+static int gpu_temp_c(int which) {
+    const gpu_lookup_t *g = gpu_get();
+    if (!g || !gpu_awake(g) || which < 0 || which > 2) return -1;
+    if (gpu_is(g, "nvidia")) return (which == 0 && nvml_poll() && g_nvml.temp >= 1) ? g_nvml.temp : -1;
+    if (!g->hwmon[0] || !g->chan[which]) return -1;
+    char p[400];
+    snprintf(p, sizeof(p), "%s/temp%d_input", g->hwmon, g->chan[which]);
+    return read_hwmon_temp_c(p);
+}
+
+/* used/total both 0 = this GPU doesn't report VRAM (iGPU, nouveau...) */
 static void get_vram_bytes(unsigned long long *used, unsigned long long *total) {
-    FILE *f;
-    char path[352];
     *used = 0; *total = 0;
-    const char *dev = drm_device_dir(&g_drm_gpu);
-    if (!dev) return;
-    snprintf(path, sizeof(path), "%s/mem_info_vram_used", dev);
-    f = fopen(path, "r");
-    if (f) { fscanf(f, "%llu", used); fclose(f); }
-    snprintf(path, sizeof(path), "%s/mem_info_vram_total", dev);
-    f = fopen(path, "r");
-    if (f) { fscanf(f, "%llu", total); fclose(f); }
+    const gpu_lookup_t *g = gpu_get();
+    if (!g || !gpu_awake(g)) return;
+    if (gpu_is(g, "amdgpu")) {
+        char p[352];
+        snprintf(p, sizeof(p), "%s/mem_info_vram_used", g->dev);
+        *used = read_sysfs_ull(p);
+        snprintf(p, sizeof(p), "%s/mem_info_vram_total", g->dev);
+        *total = read_sysfs_ull(p);
+    } else if (gpu_is(g, "nvidia") && nvml_poll()) {
+        *used = g_nvml.used; *total = g_nvml.total;
+    }
+}
+
+/* -1 = this GPU doesn't report a busy % */
+static double get_gpu_percent(void) {
+    const gpu_lookup_t *g = gpu_get();
+    if (!g || !gpu_awake(g)) return -1;
+    if (gpu_is(g, "nvidia")) return (nvml_poll() && g_nvml.busy >= 0) ? g_nvml.busy : -1;
+    if (!gpu_is(g, "amdgpu")) return -1;
+    char p[352];
+    snprintf(p, sizeof(p), "%s/gpu_busy_percent", g->dev);
+    FILE *f = fopen(p, "r");
+    if (!f) return -1;
+    int v = 0;
+    int ok = fscanf(f, "%d", &v) == 1;
+    fclose(f);
+    return ok ? (double)v : -1;
+}
+
+/* drop every cached lookup (tests switch g_sysfs between fake trees) */
+__attribute__((unused)) static void sensors_reset_cache(void) {
+    g_hwmon_cpu.checked = 0; g_hwmon_board.checked = 0;
+    g_thermal_cpu.checked = 0; g_gpu.checked = 0;
+}
+
+static void print_temp_or_na(int t) {
+    if (t < 0) printf("N/A"); else printf("%d C", t);
+}
+
+/* `g510_lcd_stats --sensors`: what this machine's LCD will show, and from where. */
+static void print_sensor_report(void) {
+    printf("G510 LCD sensor detection (sysfs: %s)\n\n", g_sysfs);
+    printf("CPU temp : ");
+    if (hwmon_dir(&g_hwmon_cpu)) {
+        char p[352], lab[64] = "";
+        snprintf(p, sizeof(p), "%s/temp%d_label", g_hwmon_cpu.dir, g_hwmon_cpu.chan);
+        read_sysfs_word(p, lab, sizeof(lab));
+        printf("%s, %s temp%d%s%s%s = ", g_hwmon_cpu.name, g_hwmon_cpu.dir, g_hwmon_cpu.chan,
+               lab[0] ? " (" : "", lab, lab[0] ? ")" : "");
+    } else if (thermal_cpu_path()) {
+        printf("thermal zone '%s', %s = ", g_thermal_cpu.type, g_thermal_cpu.path);
+    } else {
+        printf("no known CPU sensor driver loaded = ");
+    }
+    print_temp_or_na(get_cpu_temp_c());
+    printf("\n");
+
+    const gpu_lookup_t *g = gpu_get();
+    printf("GPU      : ");
+    if (!g) printf("no supported GPU found (%s) -> GPU values show N/A\n", "amdgpu/nvidia/xe/nouveau/radeon/i915");
+    else {
+        printf("%s, %s%s\n", g->driver, g->dev[0] ? g->dev : "NVML (no DRM card)",
+               gpu_awake(g) ? "" : "  [runtime-suspended: not woken, values N/A]");
+        if (gpu_is(g, "nvidia")) printf("           NVML: %s\n", nvml_ready() ? "loaded" : "NOT available (libnvidia-ml missing?)");
+        unsigned long long u, t; get_vram_bytes(&u, &t);
+        printf("           VRAM   : ");
+        if (t) printf("%.1f / %.1f GB\n", u / 1073741824.0, t / 1073741824.0); else printf("N/A\n");
+        double b = get_gpu_percent();
+        printf("           busy   : "); if (b < 0) printf("N/A\n"); else printf("%.0f%%\n", b);
+        static const char *const nm[3] = {"edge", "hotspot", "vram"};
+        for (int k = 0; k < 3; k++) { printf("           %-7s: ", nm[k]); print_temp_or_na(gpu_temp_c(k)); printf("\n"); }
+    }
+
+    printf("Board    : ");
+    if (!hwmon_dir(&g_hwmon_board)) printf("no known motherboard sensor driver loaded -> MB_TEMPn show N/A\n");
+    else {
+        printf("%s, %s\n           ", g_hwmon_board.name, g_hwmon_board.dir);
+        for (int n = 1; n <= 8; n++) { printf("MB_TEMP%d=", n); print_temp_or_na(hwmon_temp_c(&g_hwmon_board, n)); printf(n < 8 ? "  " : "\n"); }
+    }
+    printf("\nMissing something? `sensors` (lm_sensors) / `sensors-detect` shows which\n"
+           "drivers your hardware needs; the driver lists are at the top of the sensor\n"
+           "section in src/g510_lcd_stats.c.\n");
+}
+
+/* temperature value text + 0-90 C bar; -1 (no sensor) -> "N/A", empty bar */
+static void format_temp(int t, double *pct_for_bar, char *disp, size_t displen) {
+    if (t < 0) { snprintf(disp, displen, "N/A"); return; }
+    *pct_for_bar = t * 100.0 / 90.0;
+    snprintf(disp, displen, "%d\xB0" "C", t);
 }
 
 static void format_gb(unsigned long long bytes, char *out, size_t outlen) {
@@ -340,28 +683,6 @@ static double get_cpu_ghz(void) {
 }
 
 /* --- Phase 2 sensors (v1.1) --- */
-
-static int read_hwmon_temp_c(const char *path) {
-    FILE *f = fopen(path, "r");
-    if (!f) return -1;
-    int millideg = 0;
-    fscanf(f, "%d", &millideg);
-    fclose(f);
-    return millideg / 1000;
-}
-
-static double get_gpu_percent(void) {
-    const char *dev = drm_device_dir(&g_drm_gpu);
-    if (!dev) return -1;
-    char path[352];
-    snprintf(path, sizeof(path), "%s/gpu_busy_percent", dev);
-    FILE *f = fopen(path, "r");
-    if (!f) return -1;
-    int v = 0;
-    fscanf(f, "%d", &v);
-    fclose(f);
-    return (double)v;
-}
 
 static double get_swap_percent(void) {
     FILE *f = fopen("/proc/meminfo", "r");
@@ -959,15 +1280,22 @@ static void draw_stats_screen(g15canvas *canvas) {
     get_vram_bytes(&vram_used, &vram_total);
     int vram_pct = vram_total > 0 ? (int)(100.0 * vram_used / vram_total) : 0;
     char vram_pct_str[16], vram_amt_str[16];
-    snprintf(vram_pct_str, sizeof(vram_pct_str), "%3d%%", vram_pct);
-    format_gb(vram_used, vram_amt_str, sizeof(vram_amt_str));
+    if (vram_total) {
+        snprintf(vram_pct_str, sizeof(vram_pct_str), "%3d%%", vram_pct);
+        format_gb(vram_used, vram_amt_str, sizeof(vram_amt_str));
+    } else {   /* iGPU / driver without VRAM info */
+        snprintf(vram_pct_str, sizeof(vram_pct_str), "N/A");
+        vram_amt_str[0] = 0;
+    }
     draw_row(canvas, ROW_VRAM, "VRAM", vram_pct, vram_pct_str, vram_amt_str, 0);
 
     int temp_c = get_cpu_temp_c();
     if (temp_c > max_temp_seen) max_temp_seen = temp_c;
     char temp_str[16], temp_max_str[16];
-    snprintf(temp_str, sizeof(temp_str), "%d" "\xB0" "C", temp_c);
-    snprintf(temp_max_str, sizeof(temp_max_str), "MAX %d" "\xB0" "C", max_temp_seen);
+    if (temp_c < 0) snprintf(temp_str, sizeof(temp_str), "N/A");
+    else snprintf(temp_str, sizeof(temp_str), "%d" "\xB0" "C", temp_c);
+    if (max_temp_seen <= 0) temp_max_str[0] = 0;
+    else snprintf(temp_max_str, sizeof(temp_max_str), "MAX %d" "\xB0" "C", max_temp_seen);
     /* temp bar: use % of a 0-90C scale just to give a visual sense of magnitude */
     int temp_pct = temp_c > 0 ? (temp_c * 100 / 90) : 0;
     draw_row(canvas, ROW_TEMP, "TEMP", temp_pct, temp_str, temp_max_str, 1);
@@ -1196,9 +1524,7 @@ static void get_sensor_value(const char *key, double *pct_for_bar, char *disp, s
     } else if (strcmp(key, "CPU_GHZ") == 0) {
         snprintf(disp, displen, "%.1fGHz", get_cpu_ghz());
     } else if (strcmp(key, "CPU_TEMP") == 0) {
-        int t = get_cpu_temp_c();
-        *pct_for_bar = t > 0 ? t * 100.0 / 90.0 : 0;
-        snprintf(disp, displen, "%d\xB0" "C", t);
+        format_temp(get_cpu_temp_c(), pct_for_bar, disp, displen);
     } else if (strcmp(key, "RAM_PCT") == 0) {
         long u, t; get_ram_kb(&u, &t);
         double v = t > 0 ? 100.0 * u / t : 0;
@@ -1209,30 +1535,28 @@ static void get_sensor_value(const char *key, double *pct_for_bar, char *disp, s
         snprintf(disp, displen, "%.1fG", u / (1024.0 * 1024.0));
     } else if (strcmp(key, "VRAM_PCT") == 0) {
         unsigned long long u, t; get_vram_bytes(&u, &t);
-        double v = t > 0 ? 100.0 * u / t : 0;
-        *pct_for_bar = v;
-        snprintf(disp, displen, "%d%%", (int)(v + 0.5));
+        if (!t) snprintf(disp, displen, "N/A");
+        else {
+            double v = 100.0 * u / t;
+            *pct_for_bar = v;
+            snprintf(disp, displen, "%d%%", (int)(v + 0.5));
+        }
     } else if (strcmp(key, "VRAM_AMOUNT") == 0) {
         unsigned long long u, t; get_vram_bytes(&u, &t);
-        format_gb(u, disp, displen);
+        if (!t) snprintf(disp, displen, "N/A"); else format_gb(u, disp, displen);
     } else if (strcmp(key, "MAXTEMP") == 0) {
-        snprintf(disp, displen, "%d\xB0" "C", max_temp_seen);
+        if (max_temp_seen <= 0) snprintf(disp, displen, "N/A");
+        else snprintf(disp, displen, "%d\xB0" "C", max_temp_seen);
     } else if (strcmp(key, "GPU_PCT") == 0) {
         double v = get_gpu_percent();
         if (v < 0) snprintf(disp, displen, "N/A");
         else { *pct_for_bar = v; snprintf(disp, displen, "%d%%", (int)v); }
     } else if (strcmp(key, "GPU_EDGE_TEMP") == 0) {
-        int t = hwmon_temp_c(&g_hwmon_gpu, 1);
-        *pct_for_bar = t > 0 ? t * 100.0 / 90.0 : 0;
-        snprintf(disp, displen, "%d\xB0" "C", t);
+        format_temp(gpu_temp_c(0), pct_for_bar, disp, displen);
     } else if (strcmp(key, "GPU_HOTSPOT_TEMP") == 0) {
-        int t = hwmon_temp_c(&g_hwmon_gpu, 2);
-        *pct_for_bar = t > 0 ? t * 100.0 / 90.0 : 0;
-        snprintf(disp, displen, "%d\xB0" "C", t);
+        format_temp(gpu_temp_c(1), pct_for_bar, disp, displen);
     } else if (strcmp(key, "GPU_VRAM_TEMP") == 0) {
-        int t = hwmon_temp_c(&g_hwmon_gpu, 3);
-        *pct_for_bar = t > 0 ? t * 100.0 / 90.0 : 0;
-        snprintf(disp, displen, "%d\xB0" "C", t);
+        format_temp(gpu_temp_c(2), pct_for_bar, disp, displen);
     } else if (strcmp(key, "SWAP_PCT") == 0) {
         double v = get_swap_percent();
         *pct_for_bar = v;
@@ -1265,9 +1589,7 @@ static void get_sensor_value(const char *key, double *pct_for_bar, char *disp, s
         snprintf(disp, displen, "%s", g_media_elapsed);
     } else if (strncmp(key, "MB_TEMP", 7) == 0) {
         int n = atoi(key + 7);
-        int t = hwmon_temp_c(&g_hwmon_board, n);
-        *pct_for_bar = t > 0 ? t * 100.0 / 90.0 : 0;
-        snprintf(disp, displen, "%d\xB0" "C", t);
+        format_temp(n > 0 ? hwmon_temp_c(&g_hwmon_board, n) : -1, pct_for_bar, disp, displen);
     }
 }
 
@@ -1800,6 +2122,13 @@ int main(int argc, char **argv) {
        restart orphaned a parec process forever. */
     signal(SIGTERM, viz_signal_cleanup);
     signal(SIGINT, viz_signal_cleanup);
+
+    /* `--sensors`: print what was detected on this machine and exit
+       (no LCD, no fonts) -- the first thing to run on new hardware. */
+    if (argc >= 2 && strcmp(argv[1], "--sensors") == 0) {
+        print_sensor_report();
+        return 0;
+    }
 
     /* Three-tier font fallback chain, none of it fatal:
        1. font_path() -- the primary bundled/converted label font.
