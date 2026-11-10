@@ -1,7 +1,9 @@
 [Unit]
 Description=G510s G-key macro daemon (G1-G18 + M1/M2/M3 profile switching)
 After=default.target ydotool.service
-Requires=ydotool.service
+# Wants, not Requires (2026-11-10): if ydotool fails, M1-M3 profile switching
+# still works; only macro replay is affected (the daemon logs that per press).
+Wants=ydotool.service
 
 [Service]
 ExecStart=/usr/bin/python3 __PROJECT_DIR__/src/g510_macro_daemon.py
