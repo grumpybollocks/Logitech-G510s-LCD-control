@@ -277,16 +277,12 @@ def write_defaults_script(rgb, brightness_val):
 echo {brightness_val} > /sys/class/leds/g15::kbd_backlight/brightness
 echo "{rgb[0]} {rgb[1]} {rgb[2]}" > /sys/class/leds/g15::kbd_backlight/multi_intensity
 """
-    # The currently-installed udev rule has DEFAULTS_SCRIPT's path baked
-    # in, so it has to keep being written for replug-restore to keep
-    # working -- but this fails with PermissionError in a packaged
-    # install (/usr/lib/g510-lcd is root-owned), which is expected
-    # there, not a real error to surface.
-    try:
-        DEFAULTS_SCRIPT.write_text(script)
-        DEFAULTS_SCRIPT.chmod(0o755)
-    except PermissionError:
-        pass
+    # (2026-11-11) Only the data-folder copy is written now. The checkout copy
+    # (DEFAULTS_SCRIPT) used to be rewritten too, "because the udev rule has its
+    # path baked in" -- no longer true: restore-backlight.sh reads only the
+    # data-folder copy. That write left the git checkout permanently modified,
+    # and in a packaged install it raised FileNotFoundError (the folder doesn't
+    # exist there), which escaped the PyQt5 slot and aborted the app.
     # Real bug found by code review: this second write is structurally
     # identical to the one above but had no guard at all, so on.apply()/
     # on_set_as_default()/on_save_all() (every call site of this function)
@@ -297,7 +293,7 @@ echo "{rgb[0]} {rgb[1]} {rgb[2]}" > /sys/class/leds/g15::kbd_backlight/multi_int
     try:
         DEFAULTS_SCRIPT_DATA_DIR.write_text(script)
         DEFAULTS_SCRIPT_DATA_DIR.chmod(0o755)
-    except PermissionError:
+    except OSError:   # any file error (not just PermissionError) -- never abort the GUI
         pass
 
 
