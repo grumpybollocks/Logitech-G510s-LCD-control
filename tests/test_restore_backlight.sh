@@ -20,7 +20,8 @@ case "\$*" in
   "show-session c2 -p Name --value") echo fakeuser ;;
 esac
 EOF
-printf '#!/bin/sh\necho "fakeuser:x:1000:1000::%s:/bin/bash"\n' "$T/home" > "$T/bin/getent"
+# fake getent: like the real one, only knows the accounts that exist
+printf '#!/bin/sh\n[ "$1 $2" = "passwd fakeuser" ] && echo "fakeuser:x:1000:1000::%s:/bin/bash" && exit 0\nexit 2\n' "$T/home" > "$T/bin/getent"
 chmod +x "$T/bin/"*
 S="$T/home/.local/share/g510-lcd/set-backlight-color.sh"
 run() { : > "$T/led/brightness"; : > "$T/led/multi_intensity"; PATH="$T/bin:$PATH" timeout 20 bash "$T/restore.sh" "$@"; }
@@ -48,7 +49,32 @@ run; [ "$(led)" = "|" ] && ok "login-screen (greeter) session skipped" || bad "g
 echo user > "$T/class"
 
 run fakeuser; [ "$(led)" = "$want" ] && ok "explicit user argument (boot-time unit) works" || bad "explicit user: '$(led)'"
-run 'bad;name'; [ "$(led)" = "|" ] && ok "invalid user argument rejected" || bad "invalid user arg applied '$(led)'"
+run 'bad;name'; [ "$(led)" = "|" ] && ok "unknown user argument rejected" || bad "invalid user arg applied '$(led)'"
+run '-ofoo'; [ "$(led)" = "|" ] && ok "option-looking user argument rejected" || bad "'-ofoo' applied '$(led)'"
+
+# The ROOT branch (what udev runs): fake `id` says uid 0, fake `setpriv` checks it
+# is asked to drop to the right user/group with clean groups+env, then runs the
+# read itself. Tests the real command line without needing root.
+mkdir -p "$T/rootbin"
+cat > "$T/rootbin/id" <<'EOF'
+#!/bin/sh
+case "$*" in "-u") echo 0 ;; "-g fakeuser") echo 1000 ;; *) exec /usr/bin/id "$@" ;; esac
+EOF
+cat > "$T/rootbin/setpriv" <<EOF
+#!/bin/bash
+echo "\$*" > "$T/setpriv.args"
+while [ "\$1" != "--" ]; do shift; done; shift
+exec "\$@"
+EOF
+chmod +x "$T/rootbin/"*
+runroot() { : > "$T/led/brightness"; : > "$T/led/multi_intensity"; PATH="$T/rootbin:$T/bin:$PATH" timeout 20 bash "$T/restore.sh" "$@"; }
+runroot
+args=$(cat "$T/setpriv.args" 2>/dev/null)
+if [ "$(led)" = "$want" ] && [[ "$args" == "--reuid=fakeuser --regid=1000 --init-groups --reset-env -- head -c 4096 -- "* ]]; then
+    ok "root branch: drops to the user via setpriv ($args) and applies"
+else
+    bad "root branch: led='$(led)' setpriv args='$args'"
+fi
 
 echo
 [ $rc -eq 0 ] && echo "restore-backlight: all passed" || echo "restore-backlight: FAILED"

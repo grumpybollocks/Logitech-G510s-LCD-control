@@ -53,4 +53,4 @@ systemctl --user status g510-lcd-stats.service --no-pager -l | head -5
 systemctl --user status g510-lcd-buttons.service --no-pager -l | head -5
 systemctl --user status g510-macro-daemon.service --no-pager -l | head -5
 
-read -p "Press Enter to close..."
+read -r -p "Press Enter to close..." _ || true

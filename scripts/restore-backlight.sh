@@ -19,10 +19,13 @@
 # the udev rule never needs to know which install method was used.
 LED=/sys/class/leds/g15::kbd_backlight
 
-# Optional $1 = user name, for a boot-time unit that runs before anyone
-# has logged in (no seat0 session yet). Must be an existing account.
+# Optional $1 = user name (the login unit passes %u; a boot-time unit can pass
+# one too). It must be an existing account -- checked with getent, not a name
+# pattern, so names like "Alex" or "alex.tria" (LDAP/sssd) work. A leading "-"
+# is refused so it can never be read as an option.
 if [ -n "${1:-}" ]; then
-    [[ "$1" =~ ^[a-z_][a-z0-9_-]*$ ]] || exit 0
+    case "$1" in -*) exit 0 ;; esac
+    getent passwd "$1" >/dev/null || exit 0
     USER_NAME=$1
 else
     # The ACTIVE session on seat0 (not just the first one listed), and only a
@@ -41,9 +44,12 @@ SAVED="$USER_HOME/.local/share/g510-lcd/set-backlight-color.sh"
 # user's, so root reading it directly could be made to block forever (a FIFO),
 # scan a huge file, or -- via a symlinked folder -- read something only root
 # can. Dropping to the user's own rights, at most 4 KB, at most 5 s, means it
-# can only ever see what the user could read anyway.
+# can only ever see what the user could read anyway. setpriv, not runuser:
+# runuser goes through PAM and would open a whole login session (logind
+# session, lastlog entry, journal lines) on every keyboard detection.
 if [ "$(id -u)" -eq 0 ]; then
-    CONTENT=$(timeout 5 runuser -u "$USER_NAME" -- head -c 4096 -- "$SAVED" 2>/dev/null) || exit 0
+    USER_GID=$(id -g "$USER_NAME" 2>/dev/null) || exit 0
+    CONTENT=$(timeout 5 setpriv --reuid="$USER_NAME" --regid="$USER_GID" --init-groups --reset-env -- head -c 4096 -- "$SAVED" 2>/dev/null) || exit 0
 else
     CONTENT=$(timeout 5 head -c 4096 -- "$SAVED" 2>/dev/null) || exit 0
 fi
