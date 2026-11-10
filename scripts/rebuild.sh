@@ -6,6 +6,10 @@
 # assumptions with no indication this script skipped it).
 # Run this after editing g510_lcd_stats.c or g510_lcd_buttons.c.
 set -e
+# (2026-11-11) If anything fails, set -e exits before the "Press Enter" at the
+# bottom and most terminals (all but konsole --noclose) close at once, hiding
+# the compiler error. Pause on a failed exit too.
+trap 'rc=$?; if [ $rc -ne 0 ]; then echo; echo "*** Rebuild FAILED (exit $rc) -- see the messages above."; read -r -p "Press Enter to close..." _; fi' EXIT
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_DIR/src"
 

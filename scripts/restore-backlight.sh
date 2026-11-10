@@ -25,18 +25,33 @@ if [ -n "${1:-}" ]; then
     [[ "$1" =~ ^[a-z_][a-z0-9_-]*$ ]] || exit 0
     USER_NAME=$1
 else
-    USER_NAME=$(loginctl list-sessions --no-legend 2>/dev/null | awk '$4=="seat0"{print $3; exit}')
+    # The ACTIVE session on seat0 (not just the first one listed), and only a
+    # real user session -- not the login screen's own greeter user (sddm/gdm).
+    SID=$(loginctl show-seat seat0 -p ActiveSession --value 2>/dev/null)
+    [ -n "$SID" ] || exit 0
+    [ "$(loginctl show-session "$SID" -p Class --value 2>/dev/null)" = user ] || exit 0
+    USER_NAME=$(loginctl show-session "$SID" -p Name --value 2>/dev/null)
 fi
 [ -z "$USER_NAME" ] && exit 0
 USER_HOME=$(getent passwd "$USER_NAME" | cut -d: -f6)
 [ -z "$USER_HOME" ] && exit 0
 SAVED="$USER_HOME/.local/share/g510-lcd/set-backlight-color.sh"
-[ -f "$SAVED" ] && [ ! -L "$SAVED" ] || exit 0
+
+# Read it AS THAT USER (2026-11-11): the file and every folder above it are the
+# user's, so root reading it directly could be made to block forever (a FIFO),
+# scan a huge file, or -- via a symlinked folder -- read something only root
+# can. Dropping to the user's own rights, at most 4 KB, at most 5 s, means it
+# can only ever see what the user could read anyway.
+if [ "$(id -u)" -eq 0 ]; then
+    CONTENT=$(timeout 5 runuser -u "$USER_NAME" -- head -c 4096 -- "$SAVED" 2>/dev/null) || exit 0
+else
+    CONTENT=$(timeout 5 head -c 4096 -- "$SAVED" 2>/dev/null) || exit 0
+fi
 
 byte() { [[ "$1" =~ ^[0-9]{1,3}$ ]] && [ "$1" -le 255 ]; }
 
-BRIGHT=$(sed -nE 's#^echo ([0-9]{1,3}) > /sys/class/leds/g15::kbd_backlight/brightness$#\1#p' "$SAVED" | head -n1)
-RGB=$(sed -nE 's#^echo "([0-9]{1,3}) ([0-9]{1,3}) ([0-9]{1,3})" > /sys/class/leds/g15::kbd_backlight/multi_intensity$#\1 \2 \3#p' "$SAVED" | head -n1)
+BRIGHT=$(printf '%s\n' "$CONTENT" | sed -nE 's#^echo ([0-9]{1,3}) > /sys/class/leds/g15::kbd_backlight/brightness$#\1#p' | head -n1)
+RGB=$(printf '%s\n' "$CONTENT" | sed -nE 's#^echo "([0-9]{1,3}) ([0-9]{1,3}) ([0-9]{1,3})" > /sys/class/leds/g15::kbd_backlight/multi_intensity$#\1 \2 \3#p' | head -n1)
 
 if byte "$BRIGHT"; then echo "$BRIGHT" > "$LED/brightness"; fi
 read -r R G B <<< "$RGB"
