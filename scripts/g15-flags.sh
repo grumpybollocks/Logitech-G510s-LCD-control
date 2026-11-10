@@ -18,6 +18,17 @@ case "${1:-}" in
     --lib) echo "$lib" ;;
     --check)
         if [ -z "$lib" ]; then echo "libg15render.so.1 not found by the loader" >&2; exit 1; fi
+        if ! command -v nm >/dev/null; then echo "'nm' (binutils) is needed to check libg15render -- install your distro's build tools" >&2; exit 1; fi
+        # gcc searches /usr/local/include BEFORE /usr/include even without -I, so a
+        # stray header there would be compiled against while /usr/lib's library is
+        # the one loaded -- the exact mismatch this script exists to prevent.
+        case "$lib" in
+            /usr/local/*) ;;
+            *) if [ -e /usr/local/include/libg15render.h ]; then
+                   echo "a stray /usr/local/include/libg15render.h would be used with $lib -- remove the old /usr/local copy of libg15render first" >&2
+                   exit 1
+               fi ;;
+        esac
         if ! nm -D "$lib" 2>/dev/null | grep -q ' T g15r_ttfLoad$'; then
             echo "$lib was built WITHOUT TrueType support -- g510_lcd_stats needs it (rebuild it with --enable-ttf)" >&2
             exit 1
