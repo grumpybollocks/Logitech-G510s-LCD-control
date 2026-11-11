@@ -91,6 +91,9 @@ What the installer adds, and why:
 | building the C programs | `base-devel`, `pkgconf` | `build-essential`, `pkg-config`, `libusb-dev`, `cmake` |
 | the LCD drawing library | `libg15`, `libg15render` (AUR) | built from source (see above) |
 
+Optional: `zenity` gives the Start shortcut a proper dialog; without it you
+get a desktop notification or a small Qt window instead.
+
 ## Sensors: what shows up on which hardware
 
 Sensors are found by driver name, so most PCs need no setup. To see
@@ -102,12 +105,12 @@ src/g510_lcd_stats --sensors
 
 | LCD reading | Works on | Otherwise |
 | --- | --- | --- |
-| CPU temp | AMD (`k10temp`, `zenpower`), Intel (`coretemp`), ARM / Raspberry Pi (`cpu_thermal`); falls back to the `x86_pkg_temp` thermal zone | N/A |
+| CPU temp | AMD (`k10temp`, `zenpower`, older `k8temp`), Intel (`coretemp`), VIA (`via_cputemp`), ARM / Raspberry Pi (`cpu_thermal`); falls back to the `x86_pkg_temp` thermal zone | N/A |
 | GPU temp | AMD (`amdgpu`, `radeon`), NVIDIA proprietary driver (via NVML), NVIDIA `nouveau`, Intel Arc (`xe`) | N/A — Intel integrated graphics have no temperature sensor |
 | GPU hotspot temp | AMD (`amdgpu`) | N/A |
 | GPU VRAM temp | AMD (`amdgpu`), Intel Arc (`xe`) | N/A |
 | GPU load, VRAM used | AMD (`amdgpu`), NVIDIA proprietary driver | N/A |
-| Motherboard temps (`MB_TEMP1`–`8`) | Gigabyte (`gigabyte_wmi`), ASUS (`asus_wmi_sensors`, `asus-ec-sensors`), most other boards via their Nuvoton `nct67xx`/`nct66xx`, ITE `it87xx`, Winbond or Fintek chip; Dell, ThinkPad, HP laptops | N/A |
+| Motherboard temps (`MB_TEMP1`–`8`) | Gigabyte (`gigabyte_wmi`), ASUS (`asus_wmi_sensors`, `asus-ec-sensors`, older boards `atk0110`), most other boards via their Nuvoton `nct67xx`/`nct66xx`, ITE `it87xx`, Winbond or Fintek (`f71xxx`/`f8xxx`) chip, SMSC/Fujitsu (`sch5627`, `sch5636`); Dell (`dell_smm`), ThinkPad, HP (`hp_wmi_sensors`) | N/A |
 | CPU load/clock, RAM, swap, disk, network, uptime, media | every Linux PC | — |
 
 - **Two graphics cards** (e.g. a Ryzen APU plus a real card): the one

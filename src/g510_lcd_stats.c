@@ -336,7 +336,7 @@ static int sensor_name_matches(const char *name, const char *pat) {
    k8temp = old AMD K8; via_cputemp = VIA C7/Nano (registers the old way, see
    hwmon_dir()); zenpower is out-of-tree. Thermal-zone hwmons turn '-' into '_'. */
 static const char *const CPU_HWMON[] = {
-    "k10temp", "zenpower", "coretemp", "k8temp", "via_cputemp", "cpu_thermal", "soc_thermal", NULL };
+    "k10temp", "zenpower", "coretemp", "k8temp", "via_cputemp", "cpu_thermal", "cpu-thermal", "soc_thermal", NULL };
 /* the whole-package reading, best first; none found -> temp1 */
 static const char *const CPU_LABELS[] = {
     "Package id", "Tctl", "Tdie", "SoC Temperature", "CPU", NULL };
@@ -350,11 +350,12 @@ static const char *const CPU_THERMAL[] = {
 /* (2026-11-12) Verified against the kernel sources: HP is "hp_wmi_sensors"
    (this list said "hp", which never matched); older ASUS boards = "atk0110";
    SMSC/Fujitsu = "sch5627" and "theseus" (sch5636); Fintek = f71xxx/f8xxx (old-
-   style registration, see hwmon_dir()); Intel Macs = "applesmc". */
+   style registration, see hwmon_dir()). Not "applesmc": its temp1..8 are
+   ambient/battery/... keys, so they'd show as misleading "motherboard" temps. */
 static const char *const BOARD_HWMON[] = {
     "gigabyte_wmi", "asus_wmi_sensors", "asusec", "atk0110",
     "nct6*", "it8*", "w83*", "f71*", "f8*", "sch5627", "theseus",
-    "dell_smm", "thinkpad", "hp_wmi_sensors", "applesmc", NULL };
+    "dell_smm", "thinkpad", "hp_wmi_sensors", NULL };
 /* GPU drivers this knows; also the tie-break order when VRAM is equal */
 static const char *const GPU_DRIVERS[] = {
     "amdgpu", "nvidia", "xe", "nouveau", "radeon", "i915", NULL };
