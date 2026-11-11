@@ -905,11 +905,18 @@ static void strip_browser_tab_noise(char *title) {
             if (all_digits) memmove(title, close + 2, strlen(close + 2) + 1);
         }
     }
+    /* (2026-11-11) Brave's own MPRIS player sends the tab title, e.g.
+       "Reefer Man | YouTube Music" -- seen once the Plasma Integration
+       extension's media controls are off (needed for next/previous). */
+    static const char *const suffixes[] = {
+        " | YouTube Music", " - YouTube Music", " | YouTube", " - YouTube", NULL };
     size_t len = strlen(title);
-    const char *suffix = " - YouTube";
-    size_t suflen = strlen(suffix);
-    if (len > suflen && strcmp(title + len - suflen, suffix) == 0) {
-        title[len - suflen] = 0;
+    for (int i = 0; suffixes[i]; i++) {
+        size_t suflen = strlen(suffixes[i]);
+        if (len > suflen && strcmp(title + len - suflen, suffixes[i]) == 0) {
+            title[len - suflen] = 0;
+            break;
+        }
     }
 }
 
@@ -954,18 +961,27 @@ static void update_media_info(void) {
        already covered by bugcheck_media_sensors.py's real end-to-end
        test. */
     FILE *p = popen("playerctl -a metadata --format "
-                     "'{{ playerName }}\x1f{{ title }}\x1f{{ artist }}\x1f{{ position }}\x1f{{ mpris:length }}' 2>/dev/null", "r");
+                     "'{{ playerName }}\x1f{{ status }}\x1f{{ title }}\x1f{{ artist }}\x1f{{ position }}\x1f{{ mpris:length }}' 2>/dev/null", "r");
     if (!p) return;
 
     char title_buf[64] = "", artist_buf[48] = "";
     long pos_us = -1, len_us = -1;
-    int have_title = 0, have_time = 0;
+    /* (2026-11-11) Ranked sources instead of "first line wins": with two
+       players open (a paused one + the one actually playing) the LCD
+       showed whichever playerctl listed first. Title: Playing beats not
+       playing, then plasma-browser-integration (cleanest metadata).
+       Time: Playing beats not playing, then a raw player (plasma's own
+       position/length drift across autoplayed tracks -- see above). */
+    int title_rank = -1, time_rank = -1;
     char line[2048]; /* was 256: a long (often non-Latin, multi-byte) title split the line and BOTH halves were dropped */
     while (fgets(line, sizeof(line), p)) {
         char *nl = strchr(line, '\n');
         if (nl) *nl = 0;
         char *player = line;
-        char *title = strchr(player, '\x1f');
+        char *status = strchr(player, '\x1f');
+        if (!status) continue;
+        *status = 0; status++;
+        char *title = strchr(status, '\x1f');
         if (!title) continue;
         *title = 0; title++;
         char *artist = strchr(title, '\x1f');
@@ -979,27 +995,29 @@ static void update_media_info(void) {
         *len_str = 0; len_str++;
 
         int is_plasma = (strcmp(player, "plasma-browser-integration") == 0);
+        int playing = (strcmp(status, "Playing") == 0);
+        int tr = playing * 2 + is_plasma;          /* title: playing first, then plasma */
+        int mr = playing * 2 + !is_plasma;         /* time:  playing first, then raw player */
 
-        if (!have_title || is_plasma) {
+        if (title[0] && tr > title_rank) {
             strncpy(title_buf, title, sizeof(title_buf) - 1);
             title_buf[sizeof(title_buf) - 1] = 0;
             strip_browser_tab_noise(title_buf);
             strncpy(artist_buf, artist, sizeof(artist_buf) - 1);
             artist_buf[sizeof(artist_buf) - 1] = 0;
-            have_title = 1;
+            title_rank = tr;
         }
-        if (!have_time || !is_plasma) {
+        if (mr > time_rank) {
             pos_us = atol(pos_str);
             len_us = atol(len_str);
-            have_time = 1;
-            if (!is_plasma) have_time = 2; /* a real non-bridge source found -- stop letting plasma's line override it */
+            time_rank = mr;
         }
     }
     pclose(p);
 
     strncpy(g_media_title, title_buf, sizeof(g_media_title) - 1);
     strncpy(g_media_artist, artist_buf, sizeof(g_media_artist) - 1);
-    if (have_time && pos_us >= 0 && len_us >= 0) {
+    if (time_rank >= 0 && pos_us >= 0 && len_us >= 0) {
         int pos_s = (int)(pos_us / 1000000);
         int len_s = (int)(len_us / 1000000);
         /* Real bug, direct report: on a YouTube "premiere" (a live
