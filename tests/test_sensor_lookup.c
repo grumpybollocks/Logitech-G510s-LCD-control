@@ -209,6 +209,15 @@ int main(void) {
     put("class/hwmon/hwmon0/temp1_input", "30000");
     CHECK(hwmon_dir(&g_hwmon_board) == NULL, "hwmonN/name present -> device/name never consulted");
 
+    /* existing-install layout: modern gigabyte_wmi / k10temp at HIGHER numbers than
+       a nameless old-style Fintek -- the list order must still pick the modern ones */
+    use_tree("modern_beats_legacy");
+    put("class/hwmon/hwmon0/device/name", "f71882fg");  put("class/hwmon/hwmon0/device/temp1_input", "20000");
+    put("class/hwmon/hwmon5/name", "k10temp");          put("class/hwmon/hwmon5/temp1_input", "60000");
+    put("class/hwmon/hwmon6/name", "gigabyte_wmi");     put("class/hwmon/hwmon6/temp1_input", "29000");
+    CHECK(get_cpu_temp_c() == 60 && hwmon_dir(&g_hwmon_board) && strcmp(g_hwmon_board.name, "gigabyte_wmi") == 0,
+          "modern k10temp + gigabyte_wmi win over a lower-numbered old-style f71882fg");
+
     /* two hwmon entries with the same driver: lowest number wins, every time */
     use_tree("two_coretemp");
     put("class/hwmon/hwmon7/name", "coretemp"); put("class/hwmon/hwmon7/temp1_input", "70000");
