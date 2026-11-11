@@ -10,9 +10,22 @@ failed=""
 for s in g510-lcd-stats g510-lcd-buttons g510-macro-daemon; do
     systemctl --user is-active --quiet "$s.service" || failed="$failed $s"
 done
+# Popup with whatever this desktop has (2026-11-12): zenity if installed, else a
+# normal desktop notification, else plain text -- zenity is optional now.
+tell() {   # $1 = info|error, $2 = text
+    if command -v zenity >/dev/null; then
+        zenity --"$1" --title="G510 LCD" --text="$2" --width=300 2>/dev/null
+    elif command -v notify-send >/dev/null; then
+        notify-send -a "G510 LCD" $([ "$1" = error ] && echo "-u critical") "G510 LCD" "$2" 2>/dev/null
+    else
+        echo "G510 LCD: $2"
+    fi
+}
 if [ -z "$failed" ]; then
-    zenity --info --title="G510 LCD" --text="Screen, buttons, and macro daemon restarted." --width=250 2>/dev/null
+    tell info "Screen, buttons, and macro daemon restarted."
 else
-    zenity --error --title="G510 LCD" --text="Not running:$failed\n\nSee the View Logs shortcut (or run ./install.sh if they were never installed)." --width=320 2>/dev/null
+    tell error "Not running:$failed
+
+See the View Logs shortcut (or run ./install.sh if they were never installed)."
     exit 1
 fi

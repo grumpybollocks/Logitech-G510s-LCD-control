@@ -1,12 +1,13 @@
 # Maintainer: grumpybollocks
 pkgname=g510-lcd
 pkgver=1.1
-pkgrel=4
+pkgrel=5
 pkgdesc="LCD stats screen, custom dashboards, backlight, and G-key macros for the Logitech G510s Gaming Keyboard"
 arch=('x86_64')   # ships compiled binaries (g510_lcd_stats, g510_lcd_buttons)
 url="https://github.com/grumpybollocks/Logitech-G510s-LCD-control"
 license=('MIT')
-depends=('python' 'python-pyqt5' 'python-pillow' 'python-evdev' 'ydotool' 'freetype2' 'zenity' 'playerctl' 'libpulse' 'libg15' 'libg15render')
+depends=('python' 'python-pyqt5' 'python-pillow' 'python-evdev' 'ydotool' 'freetype2' 'playerctl' 'libpulse' 'libg15' 'libg15render')
+optdepends=('zenity: popup dialogs for the Start shortcut (falls back to a desktop notification)')
 makedepends=('pkgconf')
 # The source repo is private while the app is being finished, and this
 # exact tag doesn't exist yet either -- v1.1 is built but deliberately

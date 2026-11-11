@@ -181,6 +181,34 @@ int main(void) {
     put("class/thermal/thermal_zone1/type", "x86_pkg_temp"); put("class/thermal/thermal_zone1/temp", "48000");
     CHECK(get_cpu_temp_c() == 48, "thermal-zone fallback: x86_pkg_temp 48 C (acpitz decoy ignored)");
 
+    /* (2026-11-12) old-style drivers: no hwmonN/name, name + temps on hwmonN/device */
+    use_tree("legacy_fintek_via");
+    put("class/hwmon/hwmon0/device/name", "via_cputemp");
+    put("class/hwmon/hwmon0/device/temp1_input", "45000");
+    put("class/hwmon/hwmon1/device/name", "f71882fg");
+    put("class/hwmon/hwmon1/device/temp1_input", "33000");
+    put("class/hwmon/hwmon1/device/temp2_input", "41000");
+    CHECK(get_cpu_temp_c() == 45 && strstr(g_hwmon_cpu.dir, "/hwmon0/device"),
+          "old-style VIA CPU sensor found via device/name -> 45 C");
+    CHECK(hwmon_dir(&g_hwmon_board) && strcmp(g_hwmon_board.name, "f71882fg") == 0 &&
+          hwmon_temp_c(&g_hwmon_board, 1) == 33 && hwmon_temp_c(&g_hwmon_board, 2) == 41,
+          "old-style Fintek f71882fg board: MB_TEMP1/2 = 33/41 C from device/");
+
+    /* names verified against the kernel: HP is hp_wmi_sensors, old AMD is k8temp */
+    use_tree("hp_k8");
+    put("class/hwmon/hwmon0/name", "k8temp");     put("class/hwmon/hwmon0/temp1_input", "52000");
+    put("class/hwmon/hwmon1/name", "hp_wmi_sensors"); put("class/hwmon/hwmon1/temp1_input", "38000");
+    CHECK(get_cpu_temp_c() == 52, "old AMD K8 CPU (k8temp) -> 52 C");
+    CHECK(hwmon_dir(&g_hwmon_board) && strcmp(g_hwmon_board.name, "hp_wmi_sensors") == 0 &&
+          hwmon_temp_c(&g_hwmon_board, 1) == 38, "HP board (hp_wmi_sensors) -> MB_TEMP1 38 C");
+
+    /* a modern driver WITH a name file never takes the device/name fallback */
+    use_tree("name_wins");
+    put("class/hwmon/hwmon0/name", "nvme");
+    put("class/hwmon/hwmon0/device/name", "f71882fg");   /* decoy: must be ignored */
+    put("class/hwmon/hwmon0/temp1_input", "30000");
+    CHECK(hwmon_dir(&g_hwmon_board) == NULL, "hwmonN/name present -> device/name never consulted");
+
     /* two hwmon entries with the same driver: lowest number wins, every time */
     use_tree("two_coretemp");
     put("class/hwmon/hwmon7/name", "coretemp"); put("class/hwmon/hwmon7/temp1_input", "70000");

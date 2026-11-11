@@ -88,7 +88,6 @@ What the installer adds, and why:
 | the LCD's label font | `freetype2` | `libfreetype-dev` |
 | song title / artist / time | `playerctl` | `playerctl` |
 | the audio visualizer | `libpulse` (`parec`) | `pulseaudio-utils` |
-| the "restarted" popup | `zenity` | `zenity` |
 | building the C programs | `base-devel`, `pkgconf` | `build-essential`, `pkg-config`, `libusb-dev`, `cmake` |
 | the LCD drawing library | `libg15`, `libg15render` (AUR) | built from source (see above) |
 

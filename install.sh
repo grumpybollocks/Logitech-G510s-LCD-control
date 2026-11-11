@@ -67,19 +67,19 @@ case "$FAMILY" in fedora|suse) echo "  NOTE: $FAMILY isn't tested yet -- please 
 # added in step 5 only if gcc/pkg-config are missing); elsewhere the build tools
 # are needed anyway for the source builds, and ydotool is handled in step 3.
 case "$FAMILY" in
-    arch)   PKGS=(python-pyqt5 python-pillow ydotool python-evdev freetype2 zenity playerctl)
+    arch)   PKGS=(python-pyqt5 python-pillow ydotool python-evdev freetype2 playerctl)
             have() { pacman -Qi "$1" &>/dev/null; }
             inst() { $SUDO pacman -S --needed --noconfirm "$@"; } ;;
-    debian) PKGS=(python3-pyqt5 python3-pil python3-evdev libfreetype-dev zenity playerctl pulseaudio-utils libusb-dev build-essential pkg-config cmake curl ca-certificates)
+    debian) PKGS=(python3-pyqt5 python3-pil python3-evdev libfreetype-dev playerctl pulseaudio-utils libusb-dev build-essential pkg-config cmake curl ca-certificates)
             # "install ok installed" only: `dpkg -s` also succeeds for removed-but-not-purged packages
             have() { dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'install ok installed'; }
             APT_UPDATED=0
             apt_update_once() { [ "$APT_UPDATED" = 1 ] || { $SUDO apt-get update -qq || true; APT_UPDATED=1; }; }
             inst() { apt_update_once && $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"; } ;;
-    fedora) PKGS=(python3-qt5 python3-pillow python3-evdev freetype-devel zenity playerctl pulseaudio-utils libusb-compat-0.1-devel gcc make pkgconf-pkg-config cmake curl)
+    fedora) PKGS=(python3-qt5 python3-pillow python3-evdev freetype-devel playerctl pulseaudio-utils libusb-compat-0.1-devel gcc make pkgconf-pkg-config cmake curl)
             have() { rpm -q "$1" &>/dev/null || rpm -q --whatprovides "$1" &>/dev/null; }
             inst() { $SUDO dnf install -y "$@"; } ;;
-    suse)   PKGS=(python3-qt5 python3-Pillow python3-evdev freetype2-devel zenity playerctl pulseaudio-utils libusb-compat-devel gcc make pkg-config cmake curl)
+    suse)   PKGS=(python3-qt5 python3-Pillow python3-evdev freetype2-devel playerctl pulseaudio-utils libusb-compat-devel gcc make pkg-config cmake curl)
             have() { rpm -q "$1" &>/dev/null || rpm -q --whatprovides "$1" &>/dev/null; }
             inst() { $SUDO zypper --non-interactive install "$@"; } ;;
 esac
