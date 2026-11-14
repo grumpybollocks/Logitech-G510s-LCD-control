@@ -15,7 +15,26 @@ if len(sys.argv) != 5:
 
 infile, outfile, max_width, max_height = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
 
-img = Image.open(infile)
+img = Image.open(infile)   # reads only the header so far
+
+# (2026-11-14) Memory: the whole picture used to be decoded and converted at
+# full size (~14 bytes/pixel -- ~650 MB for a 48 MP photo, also on every
+# resize-drag step). Refuse absurd sizes up front, let JPEG decode at reduced
+# size, and shrink to 4x the target before any RGBA/composite work; the final
+# 1-bit result for a 160x43 screen is unchanged in practice.
+MAX_PIXELS = 60_000_000
+if img.width * img.height > MAX_PIXELS:
+    print(f"image too large ({img.width}x{img.height}); use one under {MAX_PIXELS // 1_000_000} megapixels",
+          file=sys.stderr)
+    sys.exit(2)
+work = (max(1, max_width * 4), max(1, max_height * 4))
+img.draft("RGB", work)                 # JPEG: cheap decode-time downscale; no-op for other formats
+if img.mode.startswith("I;16"):        # 16-bit grayscale: thumbnail() can't resample it
+    img = img.convert("I")
+try:
+    img.thumbnail(work)                # palette (P) images resample by index, so transparency is kept
+except ValueError:                     # an exotic mode thumbnail() can't handle: convert at full size, as before
+    pass
 
 # Real bug found via direct testing: a transparent PNG (the normal case
 # for a real logo file -- confirmed by reproducing with a synthetic

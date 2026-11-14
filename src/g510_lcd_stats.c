@@ -337,9 +337,12 @@ static int sensor_name_matches(const char *name, const char *pat) {
    hwmon_dir()); zenpower is out-of-tree. Thermal-zone hwmons turn '-' into '_'. */
 static const char *const CPU_HWMON[] = {
     "k10temp", "zenpower", "coretemp", "k8temp", "via_cputemp", "cpu_thermal", "cpu-thermal", "soc_thermal", NULL };
-/* the whole-package reading, best first; none found -> temp1 */
+/* the whole-package reading, best first; none found -> temp1.
+   Tdie before Tctl (2026-11-14): on Ryzen 1000/2000X and Threadripper
+   Tctl = die temperature + a 10-27 C fan-control offset; everywhere
+   else the two are equal or only Tctl exists. */
 static const char *const CPU_LABELS[] = {
-    "Package id", "Tctl", "Tdie", "SoC Temperature", "CPU", NULL };
+    "Package id", "Tdie", "Tctl", "SoC Temperature", "CPU", NULL };
 /* fallback when no CPU hwmon driver is loaded: thermal-zone types */
 static const char *const CPU_THERMAL[] = {
     "x86_pkg_temp", "cpu-thermal", "cpu_thermal", "soc_thermal", "cpu0-thermal", NULL };
@@ -385,7 +388,7 @@ static int hwmon_pick_chan(const char *dir, const char *const *labels) {
 }
 
 static const char *hwmon_dir(hwmon_lookup_t *c) {
-    time_t now = time(NULL);
+    time_t now = mono_now();
     if (c->checked && difftime(now, c->checked) < SENSOR_RESCAN_SEC) return c->dir[0] ? c->dir : NULL;
     c->checked = now;
     c->dir[0] = 0; c->name[0] = 0; c->chan = 1;
@@ -439,7 +442,7 @@ static thermal_lookup_t g_thermal_cpu;
 
 static const char *thermal_cpu_path(void) {
     thermal_lookup_t *c = &g_thermal_cpu;
-    time_t now = time(NULL);
+    time_t now = mono_now();
     if (c->checked && difftime(now, c->checked) < SENSOR_RESCAN_SEC) return c->path[0] ? c->path : NULL;
     c->checked = now;
     c->path[0] = 0; c->type[0] = 0;
@@ -498,7 +501,7 @@ static int nvml_ready(void) {
        a service started before the nvidia module showed N/A forever) */
     static time_t last_try = 0;
     if (g_nvml.state > 0) return 1;
-    time_t now = time(NULL);
+    time_t now = mono_now();
     if (g_nvml.state < 0 && difftime(now, last_try) < SENSOR_RESCAN_SEC) return 0;
     last_try = now;
     g_nvml.state = -1;
@@ -546,7 +549,7 @@ static int nvidia_pci_suspended(void) {
 static int nvml_poll(void) {
     if (nvidia_pci_suspended()) return 0;
     if (!nvml_ready()) return 0;
-    time_t now = time(NULL);
+    time_t now = mono_now();
     if (g_nvml.polled == now) return 1;
     g_nvml.polled = now;
     unsigned int t = 0; nvml_util_t u; nvml_mem_t m;
@@ -595,7 +598,7 @@ static void gpu_pick_channels(gpu_lookup_t *g) {
 
 static const gpu_lookup_t *gpu_get(void) {
     gpu_lookup_t *g = &g_gpu;
-    time_t now = time(NULL);
+    time_t now = mono_now();
     if (g->checked && difftime(now, g->checked) < SENSOR_RESCAN_SEC) return g->driver[0] ? g : NULL;
     memset(g, 0, sizeof(*g));
     g->checked = now;
@@ -773,13 +776,20 @@ static void format_gb(unsigned long long bytes, char *out, size_t outlen) {
 }
 
 static double get_cpu_ghz(void) {
+    /* (2026-11-14) cpufreq first: present on x86 and ARM alike, while
+       /proc/cpuinfo has no "cpu MHz" line on ARM and some VMs (the screen
+       showed 0.0GHz there). Both report the first CPU, as before. */
+    char p[352], v[32];
+    snprintf(p, sizeof(p), "%s/devices/system/cpu/cpufreq/policy0/scaling_cur_freq", g_sysfs);
+    if (read_sysfs_word(p, v, sizeof(v)) && atol(v) > 0) return atol(v) / 1e6;   /* kHz */
     FILE *f = fopen("/proc/cpuinfo", "r");
     if (!f) return 0.0;
     char line[256];
     double mhz = 0.0;
     while (fgets(line, sizeof(line), f)) {
         if (strncmp(line, "cpu MHz", 7) == 0) {
-            sscanf(strchr(line, ':') + 1, "%lf", &mhz);
+            const char *colon = strchr(line, ':');
+            if (colon) sscanf(colon + 1, "%lf", &mhz);
             break;
         }
     }
@@ -808,6 +818,18 @@ static double get_swap_percent(void) {
 
 /* Returns -1 if the path isn't mounted right now (e.g. a removable
    secondary drive unplugged) instead of guessing or crashing. */
+/* (2026-11-14) a folder is a mountpoint if it sits on a different device than
+   its parent (or is "/"). */
+static int is_mountpoint(const char *path) {
+    if (!path || !path[0]) return 0;
+    struct stat here, up;
+    char parent[300];
+    if (stat(path, &here) != 0 || !S_ISDIR(here.st_mode)) return 0;
+    snprintf(parent, sizeof(parent), "%s/..", path);
+    if (stat(parent, &up) != 0) return 0;
+    return here.st_dev != up.st_dev || here.st_ino == up.st_ino;
+}
+
 static double get_disk_percent(const char *path) {
     struct statvfs st;
     if (statvfs(path, &st) != 0) return -1;
@@ -856,7 +878,7 @@ static void update_net_speed(void) {
         }
         fclose(f);
     }
-    time_t now = time(NULL);
+    time_t now = mono_now();
     double dt = prev_time > 0 ? difftime(now, prev_time) : 0;
     /* rx/tx are unsigned, so a counter RESET (interface reconnect/driver
        reload dropping them back near 0, not just the first-ever sample)
@@ -938,7 +960,10 @@ static void strip_browser_tab_noise(char *title) {
     }
 }
 
+static time_t g_media_skip_until = 0;   /* back-off after a hung player (see below) */
+
 static void update_media_info(void) {
+    if (mono_now() < g_media_skip_until) return;
     g_media_title[0] = 0;
     g_media_artist[0] = 0;
     g_media_elapsed[0] = 0;
@@ -978,7 +1003,10 @@ static void update_media_info(void) {
        (Spotify, VLC) where there's only one real source to begin with,
        already covered by bugcheck_media_sensors.py's real end-to-end
        test. */
-    FILE *p = popen("playerctl -a metadata --format "
+    /* (2026-11-14) capped: a hung player (frozen browser tab) used to block
+       this whole render loop -- LCD, clock, L-buttons -- for D-Bus's 25 s
+       timeout per player. timeout(1) is coreutils, present everywhere. */
+    FILE *p = popen("timeout -k 1 2 playerctl -a metadata --format "
                      "'{{ playerName }}\x1f{{ status }}\x1f{{ title }}\x1f{{ artist }}\x1f{{ position }}\x1f{{ mpris:length }}' 2>/dev/null", "r");
     if (!p) return;
 
@@ -1031,7 +1059,10 @@ static void update_media_info(void) {
             time_rank = mr;
         }
     }
-    pclose(p);
+    /* (2026-11-14) 124 = timeout(1) had to kill playerctl: a player is hung.
+       Don't stall the loop ~2 s on every update -- try again in 30 s. */
+    int st = pclose(p);
+    if (st != -1 && WIFEXITED(st) && WEXITSTATUS(st) == 124) g_media_skip_until = mono_now() + 30;
 
     strncpy(g_media_title, title_buf, sizeof(g_media_title) - 1);
     strncpy(g_media_artist, artist_buf, sizeof(g_media_artist) - 1);
@@ -1253,24 +1284,22 @@ static const char *custom_screens_path(void) {
     return path;
 }
 
-/* An optional removable secondary drive, auto-mounted by udisks2 at
-   the standard /run/media/$USER/<label> convention -- <label> is
-   whatever the drive's own real filesystem volume label is, which
-   this code has no control over (it's a fact about the physical
-   disk, not a choice made here). Built at runtime from $USER rather
-   than baked in at compile time (same reasoning as button_log_path()
-   in g510_lcd_buttons.c), so this file doesn't hardcode a username.
-   On a machine without this exact drive, get_disk_percent() already
-   handles the path not existing by showing "N/A" rather than
-   crashing. EDIT THE LABEL BELOW to match your own drive's real
-   volume label if you want the DISK_SECONDARY_PCT sensor to point at
-   it, or just don't use that sensor. */
-#define SECONDARY_DISK_LABEL "frigider"
-
+/* An optional secondary drive for the DISK_SECONDARY_PCT sensor. (2026-11-14)
+   Its mount folder is a one-line setting file, <data dir>/secondary_disk,
+   written by the app when that sensor is added (it asks for the folder).
+   It used to be a compile-time drive label plus the /run/media/$USER/
+   convention, which only fit the original machine (and Debian/Ubuntu
+   mount under /media/$USER). No setting or no such folder -> "N/A". */
 static const char *disk_secondary_path(void) {
     static char path[256];
-    const char *user = getenv("USER");
-    snprintf(path, sizeof(path), "/run/media/%s/" SECONDARY_DISK_LABEL, user ? user : "nobody");
+    char cfg[300];
+    snprintf(cfg, sizeof(cfg), "%s/secondary_disk", data_dir());
+    path[0] = 0;
+    FILE *f = fopen(cfg, "r");
+    if (f) {
+        if (fgets(path, sizeof(path), f)) path[strcspn(path, "\r\n")] = 0;
+        fclose(f);
+    }
     return path;
 }
 
@@ -1397,12 +1426,19 @@ static const char *screen_state_path(void) {
 }
 
 static int read_screen(void) {
+    /* (2026-11-14) the buttons listener rewrites this file in place, so a
+       read can land between its truncate and its write and see nothing:
+       keep the last good value then, instead of flashing screen 0 (which
+       also stopped and restarted the audio capture). The file is recreated
+       empty if deleted (see screen_watch_add), which also keeps the last
+       screen; only a fresh start begins at screen 0. */
+    static int last = 0;
     FILE *f = fopen(screen_state_path(), "r");
-    if (!f) return 0;
-    int s = 0;
-    fscanf(f, "%d", &s);
+    if (!f) return last = 0;
+    int s;
+    if (fscanf(f, "%d", &s) == 1) last = s;
     fclose(f);
-    return s;
+    return last;
 }
 
 /* Screen 0: the original built-in stats screen. Pulled into its own
@@ -1850,7 +1886,10 @@ static void get_sensor_value(const char *key, double *pct_for_bar, char *disp, s
         if (v < 0) snprintf(disp, displen, "N/A");
         else { *pct_for_bar = v; snprintf(disp, displen, "%d%%", (int)(v + 0.5)); }
     } else if (strcmp(key, "DISK_SECONDARY_PCT") == 0) {
-        double v = get_disk_percent(disk_secondary_path());
+        /* only while a drive is really mounted there: an fstab/mnt folder stays
+           behind when unmounted, and statvfs would then report the root fs */
+        const char *dp = disk_secondary_path();
+        double v = is_mountpoint(dp) ? get_disk_percent(dp) : -1;
         if (v < 0) snprintf(disp, displen, "N/A");
         else { *pct_for_bar = v; snprintf(disp, displen, "%d%%", (int)(v + 0.5)); }
     } else if (strcmp(key, "UPTIME") == 0) {
@@ -1963,6 +2002,17 @@ static custom_screen_t custom_screens[MAX_CUSTOM_SCREENS];
 /* Reloaded every time a custom screen is drawn (cheap, small file) so
    edits made live in the GUI show up on the next frame without needing
    the daemon restarted. */
+/* x/y from custom_screens.txt (hand-editable): parsed without atoi's
+   undefined behaviour on out-of-range text and clamped to a range that
+   still allows an element to sit partly off-screen. (2026-11-14) x=-2147483648
+   used to hang forever inside libg15render's line drawing. */
+#define COORD_MIN (-G15_LCD_WIDTH)
+#define COORD_MAX (2 * G15_LCD_WIDTH)
+static int parse_coord(const char *val) {
+    long v = strtol(val, NULL, 10);
+    return v < COORD_MIN ? COORD_MIN : v > COORD_MAX ? COORD_MAX : (int)v;
+}
+
 static void load_custom_screens(void) {
     /* Real bug found while adding font-size support to this function:
        text_count was never reset here, unlike count and image_count.
@@ -2030,8 +2080,8 @@ static void load_custom_screens(void) {
                 if (sscanf(tok, "%31[^=]=%63s", key, val) == 2) {
                     if (strcmp(key, "sensor") == 0) { strncpy(el->sensor, val, sizeof(el->sensor) - 1); el->sensor[sizeof(el->sensor) - 1] = 0; }
                     else if (strcmp(key, "style") == 0) { strncpy(el->style, val, sizeof(el->style) - 1); el->style[sizeof(el->style) - 1] = 0; }
-                    else if (strcmp(key, "x") == 0) el->x = atoi(val);
-                    else if (strcmp(key, "y") == 0) el->y = atoi(val);
+                    else if (strcmp(key, "x") == 0) el->x = parse_coord(val);
+                    else if (strcmp(key, "y") == 0) el->y = parse_coord(val);
                     else if (strcmp(key, "width") == 0) {
                         /* clamp to screen bounds -- same reasoning as IMAGE's clamp
                            below: custom_screens.txt is deliberately hand-editable,
@@ -2074,8 +2124,8 @@ static void load_custom_screens(void) {
                 char key[32], val[192];
                 if (sscanf(tok, "%31[^=]=%191s", key, val) == 2) {
                     if (strcmp(key, "path") == 0) { strncpy(im->path, val, sizeof(im->path) - 1); im->path[sizeof(im->path) - 1] = 0; }
-                    else if (strcmp(key, "x") == 0) im->x = atoi(val);
-                    else if (strcmp(key, "y") == 0) im->y = atoi(val);
+                    else if (strcmp(key, "x") == 0) im->x = parse_coord(val);
+                    else if (strcmp(key, "y") == 0) im->y = parse_coord(val);
                     else if (strcmp(key, "width") == 0) im->width = atoi(val);
                     else if (strcmp(key, "height") == 0) im->height = atoi(val);
                 }
@@ -2104,8 +2154,8 @@ static void load_custom_screens(void) {
                         tx->content[sizeof(tx->content) - 1] = 0;
                         for (char *p = tx->content; *p; p++) if (*p == '_') *p = ' ';
                     }
-                    else if (strcmp(key, "x") == 0) tx->x = atoi(val);
-                    else if (strcmp(key, "y") == 0) tx->y = atoi(val);
+                    else if (strcmp(key, "x") == 0) tx->x = parse_coord(val);
+                    else if (strcmp(key, "y") == 0) tx->y = parse_coord(val);
                     else if (strcmp(key, "font") == 0) {
                         int f = atoi(val);
                         tx->font_size = (f >= G15_TEXT_SMALL && f <= G15_TEXT_HUGE) ? f : G15_TEXT_SMALL;
@@ -2126,8 +2176,8 @@ static void load_custom_screens(void) {
             while (tok) {
                 char key[32], val[64];
                 if (sscanf(tok, "%31[^=]=%63s", key, val) == 2) {
-                    if (strcmp(key, "x") == 0) vz->x = atoi(val);
-                    else if (strcmp(key, "y") == 0) vz->y = atoi(val);
+                    if (strcmp(key, "x") == 0) vz->x = parse_coord(val);
+                    else if (strcmp(key, "y") == 0) vz->y = parse_coord(val);
                     else if (strcmp(key, "width") == 0) vz->width = atoi(val);
                     else if (strcmp(key, "height") == 0) vz->height = atoi(val);
                 }
@@ -2552,6 +2602,8 @@ static long ms_until(const struct timespec *end) {
 /* Sleep up to `ms`; return early if the screen-state file was rewritten. */
 static void sleep_or_screen_change(long ms) {
     if (g_screen_ifd < 0) { usleep((useconds_t)ms * 1000); return; }
+    if (g_screen_wd < 0) screen_watch_add();   /* (2026-11-14) e.g. runtime dir was full once */
+    if (g_screen_wd < 0) { usleep((useconds_t)ms * 1000); return; }
     struct timespec end;
     clock_gettime(CLOCK_MONOTONIC, &end);
     end.tv_sec += ms / 1000;
@@ -2568,9 +2620,14 @@ static void sleep_or_screen_change(long ms) {
         while ((len = read(g_screen_ifd, buf, sizeof(buf))) > 0)
             for (char *q = buf; q < buf + len; ) {
                 struct inotify_event *ev = (struct inotify_event *)q;
+                q += sizeof(struct inotify_event) + ev->len;
+                /* (2026-11-14) only events for the CURRENT watch count: the
+                   IN_IGNORED the kernel sends after we remove an old watch
+                   used to trigger yet another re-watch, forever -- renaming
+                   the screen file made the main loop spin at full CPU. */
+                if (ev->wd != g_screen_wd) continue;
                 if (ev->mask & IN_CLOSE_WRITE) hit = 1;
                 if (ev->mask & (IN_DELETE_SELF | IN_MOVE_SELF | IN_IGNORED)) rewatch = hit = 1;
-                q += sizeof(struct inotify_event) + ev->len;
             }
         if (rewatch) {
             if (g_screen_wd >= 0) inotify_rm_watch(g_screen_ifd, g_screen_wd);
@@ -2722,7 +2779,7 @@ int main(int argc, char **argv) {
 
         static time_t last_slow_update = 0;
         static int media_was_needed = 0;
-        time_t now_t = time(NULL);
+        time_t now_t = mono_now();
         if (need_media && !media_was_needed) last_slow_update = 0; /* fresh title right on switching to the screen */
         media_was_needed = need_media;
         if (difftime(now_t, last_slow_update) >= 1.0) {
