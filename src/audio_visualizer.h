@@ -61,6 +61,18 @@
 #include <signal.h>
 #include <time.h>
 
+/* Seconds for measuring INTERVALS (rescans, restarts, rates). (2026-11-14)
+   time(NULL) froze these for as long as the wall clock was stepped back
+   (NTP fixing the clock after boot, e.g. on dual-boot PCs). BOOTTIME keeps
+   counting through suspend; +1 so it is never 0 ("never checked"). Use
+   time(NULL) only for things shown as a time of day or compared with file
+   timestamps. */
+static time_t mono_now(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_BOOTTIME, &ts);
+    return ts.tv_sec + 1;
+}
+
 /* Upper bound on how many frequency bins the DFT engine ever computes
    -- the actual number of bars DRAWN on screen is computed dynamically
    from the visualizer element's real width (see draw_visualizer_element
@@ -229,7 +241,7 @@ static void viz_start_capture(void) {
         _exit(127); /* only reached if execlp itself failed */
     }
     g_viz_pid = pid;
-    g_viz_started = time(NULL);
+    g_viz_started = mono_now();
     if (pid < 0) g_viz_retry_after = g_viz_started + VIZ_RETRY_SEC; /* fork failed: don't retry every frame */
 }
 
@@ -312,17 +324,17 @@ static void update_visualizer(void) {
        until the next VIZ_RESTART_SEC restart, and retry after a pause. */
     if (g_viz_pid > 0 && waitpid(g_viz_pid, NULL, WNOHANG) == g_viz_pid) {
         g_viz_pid = -1;
-        g_viz_retry_after = time(NULL) + VIZ_RETRY_SEC;
+        g_viz_retry_after = mono_now() + VIZ_RETRY_SEC;
         /* its file is stale now: drop it, or previews would keep showing
            a frozen spectrum from it as if it were live audio */
         if (g_viz_owns_file) { unlink(viz_capture_path()); g_viz_owns_file = 0; }
     }
     if (g_viz_pid <= 0) {
-        if (time(NULL) >= g_viz_retry_after) viz_start_capture();
+        if (mono_now() >= g_viz_retry_after) viz_start_capture();
         for (int i = 0; i < VIZ_NUM_BARS; i++) g_viz_bars[i] *= 0.85;
         return;
     }
-    if (difftime(time(NULL), g_viz_started) >= VIZ_RESTART_SEC) {
+    if (difftime(mono_now(), g_viz_started) >= VIZ_RESTART_SEC) {
         viz_stop_capture();
         viz_start_capture();
         return;
