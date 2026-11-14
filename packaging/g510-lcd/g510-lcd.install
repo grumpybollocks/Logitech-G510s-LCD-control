@@ -1,0 +1,12 @@
+# (2026-11-14) The LCD (hidraw), the G-keys, the backlight LEDs and /dev/uinput
+# (macro replay) are all group "input": without it the services just get
+# "Permission denied". install.sh adds the group itself; a package can't.
+
+post_install() {
+    echo ":: g510-lcd: add yourself to the 'input' group, then log out and back in:"
+    echo "     sudo usermod -aG input \$USER"
+    echo "   then, as your normal user:"
+    echo "     systemctl --user enable --now g510-lcd-stats g510-lcd-buttons g510-macro-daemon"
+    echo "   G-key macros replay keystrokes through ydotool: also enable its user service"
+    echo "     systemctl --user enable --now ydotool"
+}

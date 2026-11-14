@@ -19,6 +19,7 @@ import json
 import shutil
 import subprocess
 import datetime
+import time
 from pathlib import Path
 
 from PyQt5.QtWidgets import (
@@ -370,18 +371,66 @@ def atomic_write_text(path, content):
     destination share a filesystem (always true here, both under DATA_DIR),
     so any concurrent reader sees either the complete old file or the
     complete new one, never a mix."""
-    tmp = Path(str(path) + ".tmp")
-    tmp.write_text(content)
-    tmp.replace(path)
+    # (2026-11-14) unique temp name (two app windows used to share one), removed on failure
+    fd, tmp = tempfile.mkstemp(prefix=Path(path).name + ".", suffix=".tmp", dir=str(Path(path).parent))
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(content)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+MACROS_BACKUP = None          # newest copy of a broken macros.json (shown by the main window / dialogs)
+_MACROS_BACKED_UP_SIG = None  # (size, mtime_ns, inode) of the broken file last copied
+MACROS_NEW_BACKUP = False     # True right after a new copy was made, until someone reports it
+
+
+def _normalized_macros(data):
+    """Only {profile: {gkey: entry}} is usable; anything else (a list, null,
+    a profile that isn't a dict) counts as empty for that profile."""
+    out = {"M1": {}, "M2": {}, "M3": {}}
+    if isinstance(data, dict):
+        for name, prof in data.items():
+            if isinstance(prof, dict):
+                out[name] = prof
+    return out
 
 
 def load_macros():
-    if MACROS_FILE.exists():
+    """(2026-11-14) A file that can't be read, isn't JSON or has the wrong
+    shape used to come back as empty profiles -- and the next save then wrote
+    those over every macro. Now it is first copied aside (macros.json.broken-
+    <time>) and the user is told, so nothing is lost."""
+    global MACROS_BACKUP, _MACROS_BACKED_UP_SIG, MACROS_NEW_BACKUP
+    if not MACROS_FILE.exists():
+        return _normalized_macros(None)
+    try:
+        data = json.loads(MACROS_FILE.read_text(encoding="utf-8"))
+        ok = isinstance(data, dict) and all(isinstance(v, dict) for v in data.values())
+    except (OSError, ValueError):
+        data, ok = None, False
+    if not ok:
+        # every DIFFERENT broken file gets its own copy (2026-11-14 review: only the
+        # first one per run was kept, so a second hand-edit mistake could still erase macros)
         try:
-            return json.loads(MACROS_FILE.read_text())
-        except Exception:
-            pass
-    return {"M1": {}, "M2": {}, "M3": {}}
+            st = MACROS_FILE.stat()
+            sig = (st.st_size, st.st_mtime_ns, st.st_ino)
+        except OSError:
+            sig = None
+        if sig is None or sig != _MACROS_BACKED_UP_SIG:
+            backup = MACROS_FILE.with_name(MACROS_FILE.name + ".broken-" +
+                                           datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f"))
+            try:
+                shutil.copy2(MACROS_FILE, backup)
+                MACROS_BACKUP, _MACROS_BACKED_UP_SIG, MACROS_NEW_BACKUP = backup, sig, True
+            except OSError:
+                pass
+    return _normalized_macros(data)
 
 
 def save_macro(profile, gkey, value, kind="keys"):
@@ -527,6 +576,8 @@ class MacroRecordDialog(QDialog):
         if self.recorder is None:
             self.status_label.setText("Recording... press your key combo, then click Stop.")
             self.record_btn.setText("Stop")
+            # (2026-11-14) Save would store the PREVIOUS take while a new one runs
+            self.save_btn.setEnabled(False)
             self.recorder = RecorderThread()
             self.recorder.finished_recording.connect(self.on_recorded)
             self.recorder.start()
@@ -535,7 +586,9 @@ class MacroRecordDialog(QDialog):
             self.status_label.setText("Stopping...")
             self.recorder.stop()
 
-    def reject(self):
+    def _stop_recorder(self):
+        """Stop and join the recording thread (it holds an exclusive grab on
+        the keyboard). Called by EVERY way of closing this dialog."""
         if self.recorder is not None:
             # Real bug found via self-audit: a BOUNDED wait(2000) here
             # reopens the exact crash on_recorded() below already
@@ -550,7 +603,15 @@ class MacroRecordDialog(QDialog):
             # racing against a clock that doesn't match that reality.
             self.recorder.stop()
             self.recorder.wait()
+
+    def reject(self):
+        self._stop_recorder()
         super().reject()
+
+    # (2026-11-14) Save / Save Command / Clear close the dialog through accept()
+    # (defined below, next to the macros-backup notice): it stops the recorder
+    # too -- without that the whole keyboard stayed grabbed after the dialog
+    # was gone, no typing anywhere until the app was killed.
 
     def on_recorded(self, sequence, ok):
         self.recorded_sequence = sequence
@@ -570,6 +631,20 @@ class MacroRecordDialog(QDialog):
             return
         self.status_label.setText(f"Captured {len(sequence.split())} events. Click Save to keep it.")
         self.save_btn.setEnabled(bool(sequence))
+
+    def _report_macros_backup(self):
+        """Tell the user right away if saving found macros.json damaged."""
+        global MACROS_NEW_BACKUP
+        if MACROS_NEW_BACKUP and MACROS_BACKUP is not None:
+            MACROS_NEW_BACKUP = False
+            QMessageBox.warning(self, "Macros file was damaged",
+                                f"{MACROS_FILE} could not be read, so only readable macros were kept.\n\n"
+                                f"The damaged file was copied to:\n{MACROS_BACKUP}")
+
+    def accept(self):
+        self._report_macros_backup()
+        self._stop_recorder()
+        QDialog.accept(self)
 
     def on_save(self):
         if self.recorded_sequence:
@@ -782,7 +857,7 @@ class KeyboardTab(QWidget):
         # this call idempotent when poll_hardware_state calls it after
         # reading an unchanged file (same value written back, harmless).
         try:
-            active_profile_file().write_text(name)
+            atomic_write_text(active_profile_file(), name)   # (2026-11-14) atomic: the daemon polls it
         except Exception:
             pass  # matches the daemon's own best-effort LED write
 
@@ -929,7 +1004,8 @@ SENSOR_DESCRIPTIONS = {
     "GPU_VRAM_TEMP": "GPU memory (VRAM) temperature -- separate from the GPU die itself. AMD and Intel Arc cards.",
     "SWAP_PCT": "Swap space used, as a percentage of total swap.",
     "DISK_ROOT_PCT": "Disk space used on your root (/) filesystem.",
-    "DISK_SECONDARY_PCT": "Disk space used on an optional secondary drive, if you have one configured.",
+    "DISK_SECONDARY_PCT": "Disk space used on a second drive. When you add it, you pick the drive's folder "
+                          "(e.g. /run/media/you/MyDrive or /media/you/MyDrive); shows N/A while it's not mounted.",
     "UPTIME": "How long this PC has been running since boot.",
     "NET_DOWN": "Current network download speed.",
     "NET_UP": "Current network upload speed.",
@@ -1010,27 +1086,46 @@ FONT_SIZE_SCALE = {0: (1.0, 1.0), 1: (9 / 7, 6 / 5), 2: (15 / 7, 7 / 5), 3: (13 
 CUSTOM_SCREEN_IMAGES_DIR = DATA_DIR / "custom_screen_images"
 
 
+COORD_MIN, COORD_MAX = -LCD_WIDTH, 2 * LCD_WIDTH   # same clamp as g510_lcd_stats.c's parse_coord()
+
+
+def _coord(v):
+    return max(COORD_MIN, min(COORD_MAX, int(v)))
+
+
 def load_custom_screens():
     """Returns {"L2": [ {kind:"sensor",sensor,style,x,y,width} or
-    {kind:"image",path,x,y,width,height}, ... ], "L3": [...], ...}"""
+    {kind:"image",path,x,y,width,height}, ... ], "L3": [...], ...}
+
+    (2026-11-14) Parsed exactly like g510_lcd_stats.c reads the same file:
+    split on plain spaces only (str.split() also split on non-breaking and
+    other Unicode spaces and cut text short), x/y clamped like the C side
+    (a huge hand-edited value crashed the editor on mouse-over), widths and
+    heights validated like the C side, and a file that isn't valid UTF-8
+    or can't be read no longer stops the app from starting."""
     config = {k: [] for k in CUSTOM_SCREEN_KEYS}
     if not CUSTOM_SCREENS_FILE.exists():
         return config
+    try:
+        text = CUSTOM_SCREENS_FILE.read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        print(f"g510_app: can't read {CUSTOM_SCREENS_FILE}: {e}", file=sys.stderr)
+        return config
     current = None
-    for line in CUSTOM_SCREENS_FILE.read_text().splitlines():
+    for line in text.splitlines():
         line = line.strip()
         if line.startswith("SCREEN "):
             key = line.split(" ", 1)[1]
             current = key if key in config else None
         elif line.startswith("ELEMENT ") and current:
             el = {"kind": "sensor", "sensor": "", "style": "number", "x": 0, "y": 0, "width": 40, "font_size": 0}
-            for tok in line[len("ELEMENT "):].split():
+            for tok in line[len("ELEMENT "):].split(" "):
                 if "=" not in tok:
                     continue
                 k, v = tok.split("=", 1)
                 if k in ("x", "y", "width"):
                     try:
-                        el[k] = int(v)
+                        el[k] = _coord(v) if k in ("x", "y") else int(v)
                     except ValueError:
                         pass
                 elif k == "font":
@@ -1040,6 +1135,8 @@ def load_custom_screens():
                         pass
                 elif k in ("sensor", "style"):
                     el[k] = v
+            if not 0 < el["width"] <= LCD_WIDTH:
+                el["width"] = 40      # same rule as the C side
             if el["sensor"]:
                 el["sensor"] = LEGACY_SENSOR_ALIASES.get(el["sensor"], el["sensor"])
                 config[current].append(el)
@@ -1053,31 +1150,31 @@ def load_custom_screens():
             # stays absent, and those images fall back to no resize
             # handle (same as today: re-import to change size).
             im = {"kind": "image", "path": "", "x": 0, "y": 0, "width": 0, "height": 0, "src": None}
-            for tok in line[len("IMAGE "):].split():
+            for tok in line[len("IMAGE "):].split(" "):
                 if "=" not in tok:
                     continue
                 k, v = tok.split("=", 1)
                 if k in ("x", "y", "width", "height"):
                     try:
-                        im[k] = int(v)
+                        im[k] = _coord(v) if k in ("x", "y") else int(v)
                     except ValueError:
                         pass
                 elif k in ("path", "src"):
                     im[k] = v
-            if im["path"] and im["width"] > 0 and im["height"] > 0:
+            if im["path"] and 0 < im["width"] <= LCD_WIDTH and 0 < im["height"] <= LCD_HEIGHT:
                 config[current].append(im)
         elif line.startswith("TEXT ") and current:
             # Underscores decode to spaces -- matches g510_lcd_stats.c's
             # own decoding exactly, keeps the space-delimited line
             # parser on both sides simple (no quoted-string handling).
             tx = {"kind": "text", "content": "", "x": 0, "y": 0, "font_size": 0}
-            for tok in line[len("TEXT "):].split():
+            for tok in line[len("TEXT "):].split(" "):
                 if "=" not in tok:
                     continue
                 k, v = tok.split("=", 1)
                 if k in ("x", "y"):
                     try:
-                        tx[k] = int(v)
+                        tx[k] = _coord(v)
                     except ValueError:
                         pass
                 elif k == "font":
@@ -1091,16 +1188,16 @@ def load_custom_screens():
                 config[current].append(tx)
         elif line.startswith("VISUALIZER ") and current:
             vz = {"kind": "visualizer", "x": 0, "y": 0, "width": 0, "height": 0}
-            for tok in line[len("VISUALIZER "):].split():
+            for tok in line[len("VISUALIZER "):].split(" "):
                 if "=" not in tok:
                     continue
                 k, v = tok.split("=", 1)
                 if k in ("x", "y", "width", "height"):
                     try:
-                        vz[k] = int(v)
+                        vz[k] = _coord(v) if k in ("x", "y") else int(v)
                     except ValueError:
                         pass
-            if vz["width"] > 0 and vz["height"] > 0:
+            if 0 < vz["width"] <= LCD_WIDTH and 0 < vz["height"] <= LCD_HEIGHT:
                 config[current].append(vz)
     return config
 
@@ -1526,8 +1623,8 @@ class ScreenPreviewCanvas(QWidget):
             el = self._elements[self._resize_index]
             target_w = round(event.pos().x() / PREVIEW_SCALE) - el["x"]
             target_h = round(event.pos().y() / PREVIEW_SCALE) - el["y"]
-            target_w = max(MIN_IMAGE_SIZE, min(LCD_WIDTH - el["x"], target_w))
-            target_h = max(MIN_IMAGE_SIZE, min(LCD_HEIGHT - el["y"], target_h))
+            target_w = max(MIN_IMAGE_SIZE, min(LCD_WIDTH, LCD_WIDTH - el["x"], target_w))
+            target_h = max(MIN_IMAGE_SIZE, min(LCD_HEIGHT, LCD_HEIGHT - el["y"], target_h))
             if self._image_resize_preview_wh != (target_w, target_h):
                 self._image_resize_preview_wh = (target_w, target_h)
                 self.image_resize_requested.emit(self._resize_index, target_w, target_h)
@@ -1539,8 +1636,8 @@ class ScreenPreviewCanvas(QWidget):
             el = self._elements[self._resize_index]
             target_w = round(event.pos().x() / PREVIEW_SCALE) - el["x"]
             target_h = round(event.pos().y() / PREVIEW_SCALE) - el["y"]
-            target_w = max(MIN_IMAGE_SIZE, min(LCD_WIDTH - el["x"], target_w))
-            target_h = max(MIN_IMAGE_SIZE, min(LCD_HEIGHT - el["y"], target_h))
+            target_w = max(MIN_IMAGE_SIZE, min(LCD_WIDTH, LCD_WIDTH - el["x"], target_w))
+            target_h = max(MIN_IMAGE_SIZE, min(LCD_HEIGHT, LCD_HEIGHT - el["y"], target_h))
             if el["width"] != target_w or el["height"] != target_h:
                 el["width"], el["height"] = target_w, target_h
                 self.element_resized.emit(self._resize_index, target_w)
@@ -1921,6 +2018,14 @@ class CustomScreensTab(QWidget):
         # stable, not leaking -- but it's real wasted CPU/subprocess
         # churn fixed for free while auditing.)
         super().showEvent(event)
+        # (2026-11-14) the drive used to be compiled in; screens that already show
+        # it need the new setting once, or they would just say N/A after updating
+        if not getattr(self, "_disk_migration_asked", False):
+            self._disk_migration_asked = True
+            uses = any(el.get("sensor") == "DISK_SECONDARY_PCT"
+                       for els in self.config.values() for el in els)
+            if uses and not (DATA_DIR / "secondary_disk").exists():
+                self._choose_secondary_disk()
         self.preview_timer.start(1000)
         self.refresh_preview()
 
@@ -1996,6 +2101,26 @@ class CustomScreensTab(QWidget):
             return live if live in (0, 1) else 0
         return int(self.current_screen[1])  # "L2" -> 2
 
+    def _choose_secondary_disk(self):
+        """(2026-11-14) The secondary-disk sensor needs to know WHICH drive:
+        ask once (folder picker), store it in DATA_DIR/secondary_disk, which
+        g510_lcd_stats.c reads. Returns False if the user cancelled."""
+        cfg = DATA_DIR / "secondary_disk"
+        try:
+            current = cfg.read_text().strip()
+        except OSError:
+            current = ""
+        if current:
+            return True        # chosen before; the drive may just not be mounted right now
+        user = os.environ.get("USER", "")
+        start = next((d for d in (f"/run/media/{user}", f"/media/{user}", "/mnt") if Path(d).is_dir()), str(Path.home()))
+        from PyQt5.QtWidgets import QFileDialog
+        folder = QFileDialog.getExistingDirectory(self, "Which drive should this sensor show? (pick its folder)", start)
+        if not folder:
+            return False
+        atomic_write_text(cfg, folder + "\n")
+        return True
+
     def on_add_element(self):
         if self.current_screen == "L1":
             return  # button is disabled for this case, this is just a safety guard
@@ -2003,6 +2128,8 @@ class CustomScreensTab(QWidget):
         sensor_count = sum(1 for el in elements if el.get("kind", "sensor") == "sensor")
         if sensor_count >= 8:
             QMessageBox.warning(self, "Screen full", "Each screen supports up to 8 sensor elements.")
+            return
+        if self.sensor_combo.currentData() == "DISK_SECONDARY_PCT" and not self._choose_secondary_disk():
             return
         # No X/Y fields anymore -- new elements land at a default spot
         # (stacked below whatever's already there) and you drag them
@@ -2088,21 +2215,32 @@ class CustomScreensTab(QWidget):
         # stays consistent between import and resize.
         max_width = 60
         png_to_lcd = PROJECT_DIR / "src" / "png-to-lcd.py"
+
+        def failed(msg):
+            # (2026-11-14) a failed import used to leave its files behind in the data folder
+            for leftover in (src_copy_path, out_path):
+                if leftover is not None:
+                    try:
+                        Path(leftover).unlink()
+                    except OSError:
+                        pass
+            QMessageBox.critical(self, "Import failed", msg)
+
         try:
             result = subprocess.run(
                 [sys.executable, str(png_to_lcd), src_path, str(out_path), str(max_width), str(LCD_HEIGHT)],
                 capture_output=True, text=True, timeout=15,
             )
         except Exception as e:
-            QMessageBox.critical(self, "Import failed", f"Couldn't run the converter: {e}")
+            failed(f"Couldn't run the converter: {e}")
             return
         if result.returncode != 0:
-            QMessageBox.critical(self, "Import failed", result.stderr.strip() or "Unknown error converting the image.")
+            failed(result.stderr.strip() or "Unknown error converting the image.")
             return
         try:
             w, h = (int(x) for x in result.stdout.split())
         except ValueError:
-            QMessageBox.critical(self, "Import failed", f"Unexpected converter output: {result.stdout!r}")
+            failed(f"Unexpected converter output: {result.stdout!r}")
             return
 
         # Stagger by the TOTAL element count on screen, not just other
@@ -2579,18 +2717,28 @@ class MainWindow(QMainWindow):
             problems.append(f"Custom Screens: {e}")
 
         # 2. Backlight boot default (set-backlight-color.sh). Apply and
-        # Set as Default both already write this immediately -- this
-        # re-persists whatever color is CURRENTLY shown/pending so even
-        # an in-progress pick gets a real boot-default, then verifies
-        # the exact RGB triple is really in the file on disk.
+        # Set as Default already write it immediately. (2026-11-14) This
+        # used to re-save the colour merely PREVIEWED in the picker as the
+        # boot default -- breaking Set as Default's promise that previewing
+        # never loses a default you chose. Now it only reads back and
+        # reports what is really saved, and mentions an unsaved preview.
         try:
-            rgb = self.keyboard_tab._pending_rgb
-            set_as_default(rgb)
-            on_disk = DEFAULTS_SCRIPT_DATA_DIR.read_text()
-            if f"{rgb[0]} {rgb[1]} {rgb[2]}" not in on_disk:
-                problems.append("Backlight: saved but didn't read back identically")
+            import re
+            try:
+                on_disk = DEFAULTS_SCRIPT_DATA_DIR.read_text()
+            except FileNotFoundError:
+                on_disk = ""            # package installs: nothing chosen yet -- not a failure
+            # same shape restore-backlight.sh accepts: an 'echo "R G B" > ...multi_intensity' line, 0-255 each
+            m = re.search(r'^\s*echo\s+"(\d{1,3}) (\d{1,3}) (\d{1,3})"\s*>\s*\S*multi_intensity\s*$', on_disk, re.M)
+            saved = tuple(int(x) for x in m.groups()) if m else None
+            if saved is None or max(saved) > 255:
+                detail_lines.append("    Boot color: none chosen yet (use Set as Default)")
             else:
-                detail_lines.append(f"    Boot color: #{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}")
+                detail_lines.append(f"    Boot color: #{saved[0]:02x}{saved[1]:02x}{saved[2]:02x}")
+                pending = tuple(self.keyboard_tab._pending_rgb)
+                if pending != saved:
+                    detail_lines.append(f"    (previewed #{pending[0]:02x}{pending[1]:02x}{pending[2]:02x} "
+                                        "is not the boot colour -- use Set as Default to keep it)")
         except OSError as e:
             problems.append(f"Backlight: {e}")
 
@@ -2602,8 +2750,8 @@ class MainWindow(QMainWindow):
         try:
             macro_counts = {}
             if MACROS_FILE.exists():
-                data = json.loads(MACROS_FILE.read_text())
-                for profile, keys in data.items():
+                json.loads(MACROS_FILE.read_text())          # still reports a damaged file below
+                for profile, keys in load_macros().items():  # validated shape (2026-11-14)
                     if keys:
                         macro_counts[profile] = len(keys)
             if macro_counts:
@@ -2611,7 +2759,7 @@ class MainWindow(QMainWindow):
                     detail_lines.append(f"    {profile}: {macro_counts[profile]} macro(s) assigned")
             else:
                 detail_lines.append("    (no macros assigned yet)")
-        except (OSError, json.JSONDecodeError) as e:
+        except (OSError, ValueError) as e:      # ValueError: bad JSON or not UTF-8
             problems.append(f"Macros: {e}")
 
         now = datetime.datetime.now().strftime("%H:%M:%S")
@@ -2643,8 +2791,39 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
 
+def _report_unexpected_error(exc_type, exc, tb):
+    """(2026-11-14) PyQt5 aborts the whole process (core dump) on any
+    exception escaping a slot/event handler -- e.g. disk full while saving.
+    Log it and tell the user instead; the app keeps running."""
+    import traceback
+    text = "".join(traceback.format_exception(exc_type, exc, tb))
+    sys.stderr.write(text)
+    if issubclass(exc_type, KeyboardInterrupt):
+        QApplication.quit()
+        return
+    key = (exc_type.__name__, str(exc))
+    now = time.monotonic()
+    last = getattr(_report_unexpected_error, "_last", (None, -1e9))
+    if key == last[0] and now - last[1] < 60:
+        return                     # same error again (e.g. from a timer): logged, but no popup storm
+    _report_unexpected_error._last = (key, now)
+    try:
+        QMessageBox.warning(None, "G510s Control -- something went wrong",
+                            f"{exc_type.__name__}: {exc}\n\nThe app keeps running; the last change may not "
+                            "have been saved. Details were printed to the terminal / journal.")
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    sys.excepthook = _report_unexpected_error
     win = MainWindow()
     win.show()
+    if MACROS_BACKUP is not None and MACROS_NEW_BACKUP:
+        MACROS_NEW_BACKUP = False
+        QMessageBox.warning(win, "Macros file could not be read",
+                            f"{MACROS_FILE} is damaged (not valid JSON, or not in the expected shape).\n\n"
+                            f"A copy was kept as:\n{MACROS_BACKUP}\n\n"
+                            "Macros that could be read are shown; fix or restore the copy if any are missing.")
     sys.exit(app.exec_())
