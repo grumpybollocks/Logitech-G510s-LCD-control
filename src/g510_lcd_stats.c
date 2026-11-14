@@ -818,6 +818,18 @@ static double get_swap_percent(void) {
 
 /* Returns -1 if the path isn't mounted right now (e.g. a removable
    secondary drive unplugged) instead of guessing or crashing. */
+/* (2026-11-14) a folder is a mountpoint if it sits on a different device than
+   its parent (or is "/"). */
+static int is_mountpoint(const char *path) {
+    if (!path || !path[0]) return 0;
+    struct stat here, up;
+    char parent[300];
+    if (stat(path, &here) != 0 || !S_ISDIR(here.st_mode)) return 0;
+    snprintf(parent, sizeof(parent), "%s/..", path);
+    if (stat(parent, &up) != 0) return 0;
+    return here.st_dev != up.st_dev || here.st_ino == up.st_ino;
+}
+
 static double get_disk_percent(const char *path) {
     struct statvfs st;
     if (statvfs(path, &st) != 0) return -1;
@@ -948,7 +960,10 @@ static void strip_browser_tab_noise(char *title) {
     }
 }
 
+static time_t g_media_skip_until = 0;   /* back-off after a hung player (see below) */
+
 static void update_media_info(void) {
+    if (mono_now() < g_media_skip_until) return;
     g_media_title[0] = 0;
     g_media_artist[0] = 0;
     g_media_elapsed[0] = 0;
@@ -1044,7 +1059,10 @@ static void update_media_info(void) {
             time_rank = mr;
         }
     }
-    pclose(p);
+    /* (2026-11-14) 124 = timeout(1) had to kill playerctl: a player is hung.
+       Don't stall the loop ~2 s on every update -- try again in 30 s. */
+    int st = pclose(p);
+    if (st != -1 && WIFEXITED(st) && WEXITSTATUS(st) == 124) g_media_skip_until = mono_now() + 30;
 
     strncpy(g_media_title, title_buf, sizeof(g_media_title) - 1);
     strncpy(g_media_artist, artist_buf, sizeof(g_media_artist) - 1);
@@ -1411,8 +1429,9 @@ static int read_screen(void) {
     /* (2026-11-14) the buttons listener rewrites this file in place, so a
        read can land between its truncate and its write and see nothing:
        keep the last good value then, instead of flashing screen 0 (which
-       also stopped and restarted the audio capture). A missing file is
-       still screen 0. */
+       also stopped and restarted the audio capture). The file is recreated
+       empty if deleted (see screen_watch_add), which also keeps the last
+       screen; only a fresh start begins at screen 0. */
     static int last = 0;
     FILE *f = fopen(screen_state_path(), "r");
     if (!f) return last = 0;
@@ -1732,7 +1751,10 @@ static void get_sensor_value(const char *key, double *pct_for_bar, char *disp, s
         if (v < 0) snprintf(disp, displen, "N/A");
         else { *pct_for_bar = v; snprintf(disp, displen, "%d%%", (int)(v + 0.5)); }
     } else if (strcmp(key, "DISK_SECONDARY_PCT") == 0) {
-        double v = get_disk_percent(disk_secondary_path());
+        /* only while a drive is really mounted there: an fstab/mnt folder stays
+           behind when unmounted, and statvfs would then report the root fs */
+        const char *dp = disk_secondary_path();
+        double v = is_mountpoint(dp) ? get_disk_percent(dp) : -1;
         if (v < 0) snprintf(disp, displen, "N/A");
         else { *pct_for_bar = v; snprintf(disp, displen, "%d%%", (int)(v + 0.5)); }
     } else if (strcmp(key, "UPTIME") == 0) {
@@ -2423,6 +2445,8 @@ static long ms_until(const struct timespec *end) {
 /* Sleep up to `ms`; return early if the screen-state file was rewritten. */
 static void sleep_or_screen_change(long ms) {
     if (g_screen_ifd < 0) { usleep((useconds_t)ms * 1000); return; }
+    if (g_screen_wd < 0) screen_watch_add();   /* (2026-11-14) e.g. runtime dir was full once */
+    if (g_screen_wd < 0) { usleep((useconds_t)ms * 1000); return; }
     struct timespec end;
     clock_gettime(CLOCK_MONOTONIC, &end);
     end.tv_sec += ms / 1000;

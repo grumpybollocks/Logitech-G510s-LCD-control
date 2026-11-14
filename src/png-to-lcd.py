@@ -29,8 +29,12 @@ if img.width * img.height > MAX_PIXELS:
     sys.exit(2)
 work = (max(1, max_width * 4), max(1, max_height * 4))
 img.draft("RGB", work)                 # JPEG: cheap decode-time downscale; no-op for other formats
-if img.mode != "P":                    # palette images are converted below first (keeps transparency)
-    img.thumbnail(work)
+if img.mode.startswith("I;16"):        # 16-bit grayscale: thumbnail() can't resample it
+    img = img.convert("I")
+try:
+    img.thumbnail(work)                # palette (P) images resample by index, so transparency is kept
+except ValueError:                     # an exotic mode thumbnail() can't handle: convert at full size, as before
+    pass
 
 # Real bug found via direct testing: a transparent PNG (the normal case
 # for a real logo file -- confirmed by reproducing with a synthetic
