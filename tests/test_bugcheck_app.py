@@ -159,5 +159,18 @@ Image.new("1", (9000, 8000)).save(huge)                  # 72 MP, tiny file
 r = subprocess.run([sys.executable, "-I", conv, huge, out, "60", "43"], capture_output=True, text=True, timeout=60)
 check(r.returncode != 0 and "too large" in r.stderr, "72 MP picture refused with a clear message")
 
+# ---- 10. secondary disk: the app asks which drive, once
+from PyQt5.QtWidgets import QFileDialog  # noqa: E402
+cfg_file = g.DATA_DIR / "secondary_disk"
+if cfg_file.exists():
+    cfg_file.unlink()
+asked = []
+QFileDialog.getExistingDirectory = staticmethod(lambda *a, **k: asked.append(1) or "")
+check(tab._choose_secondary_disk() is False and not cfg_file.exists(), "cancelling the drive picker adds nothing")
+QFileDialog.getExistingDirectory = staticmethod(lambda *a, **k: asked.append(1) or SCRATCH)
+check(tab._choose_secondary_disk() is True and cfg_file.read_text().strip() == SCRATCH, "picked folder saved for the LCD program")
+n = len(asked)
+check(tab._choose_secondary_disk() is True and len(asked) == n, "not asked again while that folder exists")
+
 print(f"bugcheck app: {passes} passed, {fails} failed")
 sys.exit(1 if fails else 0)

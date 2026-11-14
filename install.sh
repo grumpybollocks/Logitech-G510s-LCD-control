@@ -40,8 +40,9 @@ if ! systemctl --user show-environment >/dev/null 2>&1; then
 fi
 # The checkout path is written into systemd units (quoted there); these two
 # characters can't be quoted safely.
-# ($ too: systemd expands $VAR / $$ even inside a quoted ExecStart word.)
-case "$DIR" in *'"'*|*'\'*|*'$'*) echo "Please move the project to a folder whose path has no \", \\ or \$ in it."; exit 1 ;; esac
+# ($ too: systemd expands $VAR / $$ even inside a quoted ExecStart word;
+# ` too: desktop launchers can't carry it safely inside a quoted Exec argument.)
+case "$DIR" in *'"'*|*'\'*|*'$'*|*'`'*) echo "Please move the project to a folder whose path has no \", \\, \$ or \` in it."; exit 1 ;; esac
 
 # ------------------------------------------------------------------ distro
 [ -r /etc/os-release ] && . /etc/os-release
@@ -287,10 +288,18 @@ gcc src/g510_lcd_buttons.c -o src/g510_lcd_buttons
 echo "  [ok]      src/g510_lcd_stats, src/g510_lcd_buttons"
 
 echo "=== 6/8: udev rules + hwdb (needs sudo) ==="
+LIBDIR=/usr/local/lib/g510-lcd
 # The backlight-restore-on-hotplug script lives at a fixed system path udev can
-# always find (same path the PKGBUILD uses), whatever the checkout location.
-$SUDO install -Dm755 scripts/restore-backlight.sh /usr/lib/g510-lcd/restore-backlight.sh
-$SUDO install -Dm644 udev/99-g510-lcd.rules /etc/udev/rules.d/99-g510-lcd.rules
+# always find, whatever the checkout location. (2026-11-14) Under /usr/local,
+# like everything else this installer builds: /usr/lib/g510-lcd belongs to the
+# AUR/PKGBUILD package, and writing there made the two fight over one root-run
+# file (a package reinstall silently put its own copy back). The repo's rule
+# and login unit name the package path; this installer fills in its own.
+$SUDO install -Dm755 scripts/restore-backlight.sh "$LIBDIR/restore-backlight.sh"
+rule_tmp=$(mktemp)
+sed "s|/usr/lib/g510-lcd/|$LIBDIR/|g" udev/99-g510-lcd.rules > "$rule_tmp"
+$SUDO install -Dm644 "$rule_tmp" /etc/udev/rules.d/99-g510-lcd.rules
+rm -f "$rule_tmp"
 $SUDO mkdir -p /etc/udev/hwdb.d
 $SUDO cp udev/91-g510-stop-to-playpause.hwdb /etc/udev/hwdb.d/91-g510-stop-to-playpause.hwdb
 $SUDO udevadm control --reload-rules
@@ -336,6 +345,7 @@ render_unit() {
     content=$(<"$1")
     esc=${DIR//%/%%}
     shopt -u patsub_replacement 2>/dev/null || true   # bash 5.2+: keep '&' literal
+    content=${content//\/usr\/lib\/g510-lcd\//$LIBDIR/}   # this installer's copy (see step 6)
     printf '%s\n' "${content//__PROJECT_DIR__/$esc}" > "$2"
 }
 for svc in g510-lcd-stats g510-lcd-buttons g510-macro-daemon g510-backlight-restore; do
@@ -373,11 +383,14 @@ term_cmd() {
 }
 
 write_shortcut() {
+    # (2026-11-14) '%' starts a field code in a desktop entry's Exec= (%f, %u ...):
+    # a path like "100% g510" broke every launcher. '%%' is the spec's literal '%'.
+    local exec_line=${4//%/%%}
     local entry="[Desktop Entry]
 Type=Application
 Name=$1
 Comment=$3
-Exec=$4
+Exec=$exec_line
 Icon=$5
 Terminal=false
 Categories=Utility;"

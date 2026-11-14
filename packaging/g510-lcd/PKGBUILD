@@ -17,7 +17,8 @@ makedepends=('pkgconf')
 # current g510s-dev branch HEAD, documented in README.md alongside
 # everything else actually verified this pass.
 source=("$pkgname-$pkgver.tar.gz::https://github.com/grumpybollocks/Logitech-G510s-LCD-control/archive/refs/tags/g510s-v$pkgver.tar.gz")
-sha256sums=('SKIP')
+sha256sums=('SKIP')   # TODO when a release tag is cut: pin with updpkgsums (install.sh pins its downloads)
+install=g510-lcd.install
 
 build() {
   cd "$srcdir/Logitech-G510s-LCD-control-g510s-v$pkgver"

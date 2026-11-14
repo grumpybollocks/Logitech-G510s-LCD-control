@@ -982,7 +982,8 @@ SENSOR_DESCRIPTIONS = {
     "GPU_VRAM_TEMP": "GPU memory (VRAM) temperature -- separate from the GPU die itself. AMD and Intel Arc cards.",
     "SWAP_PCT": "Swap space used, as a percentage of total swap.",
     "DISK_ROOT_PCT": "Disk space used on your root (/) filesystem.",
-    "DISK_SECONDARY_PCT": "Disk space used on an optional secondary drive, if you have one configured.",
+    "DISK_SECONDARY_PCT": "Disk space used on a second drive. When you add it, you pick the drive's folder "
+                          "(e.g. /run/media/you/MyDrive or /media/you/MyDrive); shows N/A while it's not mounted.",
     "UPTIME": "How long this PC has been running since boot.",
     "NET_DOWN": "Current network download speed.",
     "NET_UP": "Current network upload speed.",
@@ -2070,9 +2071,31 @@ class CustomScreensTab(QWidget):
             return live if live in (0, 1) else 0
         return int(self.current_screen[1])  # "L2" -> 2
 
+    def _choose_secondary_disk(self):
+        """(2026-11-14) The secondary-disk sensor needs to know WHICH drive:
+        ask once (folder picker), store it in DATA_DIR/secondary_disk, which
+        g510_lcd_stats.c reads. Returns False if the user cancelled."""
+        cfg = DATA_DIR / "secondary_disk"
+        try:
+            current = cfg.read_text().strip()
+        except OSError:
+            current = ""
+        if current and Path(current).is_dir():
+            return True
+        user = os.environ.get("USER", "")
+        start = next((d for d in (f"/run/media/{user}", f"/media/{user}", "/mnt") if Path(d).is_dir()), str(Path.home()))
+        from PyQt5.QtWidgets import QFileDialog
+        folder = QFileDialog.getExistingDirectory(self, "Which drive should this sensor show? (pick its folder)", start)
+        if not folder:
+            return False
+        atomic_write_text(cfg, folder + "\n")
+        return True
+
     def on_add_element(self):
         if self.current_screen == "L1":
             return  # button is disabled for this case, this is just a safety guard
+        if self.sensor_combo.currentData() == "DISK_SECONDARY_PCT" and not self._choose_secondary_disk():
+            return
         elements = self.config[self.current_screen]
         sensor_count = sum(1 for el in elements if el.get("kind", "sensor") == "sensor")
         if sensor_count >= 8:
