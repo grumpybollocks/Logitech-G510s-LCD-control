@@ -11,6 +11,7 @@ import time
 
 SCRATCH = tempfile.mkdtemp(prefix="g510-fp-gui-")
 os.environ["HOME"] = SCRATCH
+os.environ["XDG_RUNTIME_DIR"] = SCRATCH   # the app writes its preview image there: never the running app's
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
@@ -138,6 +139,15 @@ check(g.fanpilot_sensors(SENS) == [], "unknown format version -> ignored")
 write(rows="bad line\nx\tvolts\tV\tv\t1\nt.ok/temp1\ttemp\tOK\tfine\tabc\n")
 items = g.fanpilot_sensors(SENS)
 check(len(items) == 1 and items[0]["value"] is None, "damaged rows skipped, non-number -> no value")
+
+# same limits as the C reader: 64 rows, keys up to 47 BYTES, lines up to 254 bytes
+write(rows="".join(f"t.s{i}/temp1\ttemp\tS\ts\t30\n" for i in range(80)))
+check(len(g.fanpilot_sensors(SENS)) == 64, "at most 64 rows (C reader's FP_MAX)")
+key_ascii = "t." + "a" * 44           # 46 bytes: fits
+key_utf8 = "t." + "é" * 23            # 25 characters but 48 bytes: the LCD can't store it
+write(rows=f"{key_ascii}\ttemp\tA\ta\t30\n{key_utf8}\ttemp\tU\tu\t30\nt.long/temp1\ttemp\tL\t{'x' * 300}\t30\n")
+keys = {it["key"] for it in g.fanpilot_sensors(SENS)}
+check(keys == {"FP:" + key_ascii}, "key length counted in bytes; over-long line skipped")
 
 print(f"fanpilot GUI: {passes} passed, {fails} failed")
 sys.exit(1 if fails else 0)
