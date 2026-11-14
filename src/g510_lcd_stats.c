@@ -1762,6 +1762,8 @@ static int fanpilot_index(const char *fp_key) {
 
 /* `--sensors`: what FanPilot currently offers (sensor=FP:<key>) */
 static void print_fanpilot_report(void) {
+    /* Most users don't have FanPilot: say nothing about it unless its file exists. */
+    if (access(g_fanpilot_path, F_OK) != 0) return;
     fanpilot_load(1);
     printf("\nFanPilot : ");
     if (!g_fp_count) {
