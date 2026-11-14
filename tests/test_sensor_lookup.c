@@ -231,14 +231,14 @@ int main(void) {
     use_tree("empty");
     hwmon_lookup_t missing = {CPU_HWMON, CPU_LABELS, "", "", 1, 0};
     CHECK(hwmon_temp_c(&missing, 0) == -1, "missing sensor -> -1");
-    time_t c1 = time(NULL) - 5;
+    time_t c1 = mono_now() - 5;
     missing.checked = c1;
     CHECK(hwmon_temp_c(&missing, 0) == -1 && missing.checked == c1, "missing sensor: call 5 s later does NOT rescan");
-    missing.checked = time(NULL) - 31;
+    missing.checked = mono_now() - 31;
     hwmon_temp_c(&missing, 0);
-    CHECK(missing.checked >= time(NULL) - 1, "missing sensor: call 31 s later DOES rescan");
+    CHECK(missing.checked >= mono_now() - 1, "missing sensor: call 31 s later DOES rescan");
     CHECK(gpu_get() == NULL, "no GPU -> NULL");
-    c1 = time(NULL) - 5; g_gpu.checked = c1;
+    c1 = mono_now() - 5; g_gpu.checked = c1;
     CHECK(gpu_get() == NULL && g_gpu.checked == c1, "missing GPU: call 5 s later does NOT rescan");
 
     printf("\nsensor detection: %d passed, %d failed, %d skipped\n", passes, fails, skips);
