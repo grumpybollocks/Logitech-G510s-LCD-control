@@ -997,12 +997,18 @@ def fanpilot_sensors(path=None, max_age=FANPILOT_MAX_AGE):
     except ValueError:
         return []
     out = []
+    # Same limits as fanpilot_load() in g510_lcd_stats.c, so this list never offers a sensor
+    # the LCD can't show: lines up to 254 bytes, at most 64 rows, keys up to 47 bytes.
     for line in lines[1:]:
+        if len(out) >= 64:
+            break
+        if len(line.encode("utf-8", "replace")) > 254:
+            continue
         f = line.split("\t")
         if len(f) != 5 or not f[0] or f[1] not in _FP_UNITS:
             continue
-        if len(f[0]) > 47:
-            continue  # longer keys can't be stored by the LCD program (same rule as the C reader)
+        if len(f[0].encode("utf-8", "replace")) > 47:
+            continue  # longer keys can't be stored by the LCD program
         try:
             value = float(f[4]) if f[4] else None
         except ValueError:
