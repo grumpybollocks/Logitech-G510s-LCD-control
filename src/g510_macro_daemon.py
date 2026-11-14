@@ -13,6 +13,7 @@ shell commands run directly. Older entries may be a bare string instead
 of a dict -- treated as "keys" for backward compatibility.
 """
 import json
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -61,12 +62,21 @@ def light_profile_led(active):
 
 
 def load_macros():
+    """(2026-11-14) Always {profile: {gkey: entry}}: valid JSON of the wrong
+    shape ([] or {"M1": null}) used to crash this service on every G-key
+    press, outside the device-error handling."""
+    data = None
     if MACROS_FILE.exists():
         try:
-            return json.loads(MACROS_FILE.read_text())
-        except Exception:
-            pass
-    return {"M1": {}, "M2": {}, "M3": {}}
+            data = json.loads(MACROS_FILE.read_text())
+        except (OSError, ValueError):
+            data = None
+    out = {"M1": {}, "M2": {}, "M3": {}}
+    if isinstance(data, dict):
+        for name, prof in data.items():
+            if isinstance(prof, dict):
+                out[name] = prof
+    return out
 
 
 def _wait_for_device(path, disconnected=False):
@@ -126,7 +136,12 @@ def write_active_profile(name):
     # session-teardown race) would crash this whole daemon where the GUI doing
     # the identical write would just silently continue.
     try:
-        profile_path().write_text(name)
+        # (2026-11-14) temp file + rename: an in-place write could be read empty
+        # by the GUI's 500 ms poll (and vice versa for the GUI's write)
+        p = profile_path()
+        tmp = p.with_name(p.name + f".{os.getpid()}.tmp")
+        tmp.write_text(name)
+        tmp.replace(p)
     except Exception:
         pass
 

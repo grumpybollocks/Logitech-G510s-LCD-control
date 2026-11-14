@@ -60,5 +60,13 @@ python3 -I ./test_macro_wait.py | sed 's/^/  /'
 [ "${PIPESTATUS[0]}" -eq 0 ] || rc=1
 echo
 
+# 2026-11-14 bug-check of the app + macro service (offscreen, scratch HOME,
+# fake recorder thread -- never grabs your keyboard or touches your data)
+echo "== test_bugcheck_app"
+QT_QPA_PLATFORM=offscreen python3 -I ./test_bugcheck_app.py 2>&1 \
+    | grep -v -e 'preview error' -e 'propagateSizeHints' -e 'QStandardPaths' | sed 's/^/  /'
+[ "${PIPESTATUS[0]}" -eq 0 ] || rc=1
+echo
+
 [ $rc -eq 0 ] && echo "ALL TESTS PASSED" || echo "SOME TESTS FAILED"
 exit $rc
