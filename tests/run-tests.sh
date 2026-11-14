@@ -11,7 +11,7 @@ trap 'rm -rf "$S"' EXIT
 CF=$(pkg-config --cflags freetype2); LF=$(pkg-config --libs freetype2)
 G15F=$("$PROJECT_DIR/scripts/g15-flags.sh")   # /usr/local paths only where that library is the one loaded
 rc=0
-for t in test_sensor_lookup test_lcd_missing test_render test_bugcheck; do
+for t in test_sensor_lookup test_lcd_missing test_render test_fanpilot test_bugcheck; do
     echo "== $t"
     if ! gcc -Wall -Wextra $G15F $CF -DPROJECT_DIR="\"$PROJECT_DIR\"" -DTEST_SCRATCH="\"$S\"" \
             "$t.c" -o "$S/$t" -lg15render $LF -lm -ldl; then
@@ -57,6 +57,14 @@ echo
 
 echo "== test_macro_wait"
 python3 -I ./test_macro_wait.py | sed 's/^/  /'
+[ "${PIPESTATUS[0]}" -eq 0 ] || rc=1
+echo
+
+# FanPilot sensors in the Custom Screens tab (real widgets, offscreen,
+# scratch HOME -- never touches your real g510-lcd data)
+echo "== test_fanpilot_gui"
+QT_QPA_PLATFORM=offscreen python3 -I ./test_fanpilot_gui.py 2>&1 \
+    | grep -v -e 'preview error' -e 'propagateSizeHints' -e 'QStandardPaths' | sed 's/^/  /'
 [ "${PIPESTATUS[0]}" -eq 0 ] || rc=1
 echo
 
