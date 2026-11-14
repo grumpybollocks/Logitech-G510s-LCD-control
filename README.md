@@ -1,30 +1,78 @@
+<div align="center">
+
 # Logitech G510s for Linux
+
+**The LCD screen, RGB backlight and G-key macros of the Logitech G510 / G510s, properly working on Linux.**
 
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Platform: Arch | Ubuntu](https://img.shields.io/badge/platform-Arch%20%7C%20Ubuntu%2FDebian-1793d1.svg)
 ![Languages: C + Python](https://img.shields.io/badge/code-C%20%2B%20Python%203-informational.svg)
+![Tests](https://img.shields.io/badge/tests-194%20checks%20passing-27ae60.svg)
+![Keyboard](https://img.shields.io/badge/keyboard-G510%20%2F%20G510s-555.svg)
 
-**The LCD screen, RGB backlight and G-key macros of the Logitech G510 /
-G510s, properly working on Linux.** Logitech's own software is
-Windows-only and everything else out there is old, abandoned or
-half-broken, so this talks to the keyboard directly.
+<img src="docs/screenshots/g510s-control-v1.png" width="860" alt="G510s Control app: keyboard canvas with backlight colour, G-keys and a live mirror of the LCD">
 
-![G510s Control app](docs/screenshots/g510s-control-v1.png)
+</div>
 
-## What you get
+---
 
-- **Live stats on the LCD** — CPU, RAM, VRAM and temperature, plus an
-  analog clock on L1.
-- **Custom screens** — drag sensors, images, text and a visualizer onto
-  L2–L5 in a live editor that shows exactly what the LCD will.
-- **A little Winamp on your keyboard** — equalizer bars for whatever's
-  playing, plus the song title, artist and elapsed time.
-- **RGB backlight** colour and brightness, restored on every boot and
-  replug.
-- **G-key macros** (G1–G18) on three profiles (M1/M2/M3): recorded
-  keystrokes or shell commands.
-- **Runs as your normal user** as three small background services,
-  starts at login, and survives unplugging the keyboard or its headset.
+## Why
+
+Logitech's own software is Windows-only and everything else out there
+is old, abandoned or half-broken, so this talks to the keyboard
+directly.
+
+It writes the LCD through a `hidraw` device the kernel's own
+`hid-lg-g15` driver already owns, instead of detaching the keyboard's
+extra-keys interface the way g15daemon does. So media and volume keys
+keep working exactly as before while the LCD runs (details in
+[`G510_README.md`](G510_README.md#why-this-doesnt-use-g15daemon--libg15s-own-device-code)).
+
+## Features
+
+| | |
+|---|---|
+| 📊 **Live stats on the LCD** | CPU, RAM, VRAM and temperature on the stats screen, plus a digital and analog clock. L1 switches between the two |
+| 🧩 **Custom screens (L2–L5)** | Drag sensors, images, text and a visualizer onto four screens of your own, in a live editor that shows exactly what the LCD will |
+| 🎵 **A little Winamp on your keyboard** | Equalizer bars for whatever's playing, plus the song title, artist and elapsed time |
+| 🌡️ **Sensors found by driver name** | AMD, Intel, NVIDIA, VIA, ARM CPUs; AMD, NVIDIA and Intel Arc GPUs; most motherboard sensor chips. Anything missing shows `N/A` |
+| 🌈 **RGB backlight** | Colour presets or a hex code, Apply or Set as Default; restored at every login and every replug |
+| ⌨️ **G-key macros** | G1–G18 on three profiles (M1/M2/M3): recorded keystrokes or shell commands, replayed through `ydotool` |
+| 🔌 **Survives unplugging** | The keyboard drops off USB whenever its headset jack is plugged or unplugged; everything reconnects on its own |
+| 🪶 **Light on the system** | Audio capture and song lookups run only while a screen that shows them is on the LCD |
+| 👤 **Runs as your normal user** | The app and three small `systemd --user` services that start at login. `sudo` is only needed to install |
+| 🌀 **Optional fan sensors** | Any program that writes `/run/fanpilot/sensors.tsv` (such as the separate FanPilot fan-control app) adds its sensors, fan RPM and duty to the editor |
+
+## Screenshots
+
+Every LCD image below was rendered by the real LCD program
+(`g510_lcd_stats --preview`, the same drawing code that drives the
+keyboard), shown at 4× size.
+
+<table>
+<tr>
+<td><img src="docs/screenshots/lcd-stats.png" alt="LCD stats screen: CPU, temperature, VRAM, RAM"></td>
+<td><img src="docs/screenshots/lcd-clock.png" alt="LCD clock screen: digital time, date and an analog clock face"></td>
+</tr>
+<tr>
+<td align="center"><sub>L1: the stats screen</sub></td>
+<td align="center"><sub>L1 again: digital and analog clock</sub></td>
+</tr>
+<tr>
+<td><img src="docs/screenshots/lcd-visualizer.png" alt="Custom screen with artist, song title, elapsed time and visualizer bars"></td>
+<td><img src="docs/screenshots/lcd-custom-bars.png" alt="Custom screen with CPU, RAM, GPU and temperature bars"></td>
+</tr>
+<tr>
+<td align="center"><sub>A custom screen: media info and the visualizer</sub></td>
+<td align="center"><sub>A custom screen: sensors as bars</sub></td>
+</tr>
+<tr>
+<td colspan="2"><img src="docs/screenshots/app-custom-screens.png" alt="The Custom Screens editor in the app"></td>
+</tr>
+<tr>
+<td colspan="2" align="center"><sub>The Custom Screens editor: pick L2–L5, add elements, drag them on the preview</sub></td>
+</tr>
+</table>
 
 ## Install
 
@@ -38,8 +86,9 @@ The installer shows what's already installed and what it will add
 before touching anything, builds the LCD programs, converts the label
 fonts, sets up the udev rules and services, and adds desktop
 shortcuts. It asks for your `sudo` password once, and for one
-unplug/replug of the keyboard so the new rules take effect. Safe to
-re-run any time.
+unplug/replug of the keyboard so the new rules take effect
+(`./install.sh --yes` skips waiting for the replug). Run it as your
+normal user, not with `sudo`. Safe to re-run any time.
 
 **Check it worked:**
 
@@ -49,6 +98,10 @@ systemctl --user status g510-lcd-stats g510-lcd-buttons g510-macro-daemon
 
 All three should say `active (running)`. If the LCD stays blank,
 unplug and replug the keyboard once.
+
+**Desktop shortcuts** (on the desktop and in the app menu):
+*G510 LCD - App*, *Start* (restarts the three services and tells you
+if any isn't running), *View Logs*, *Rebuild* and *Project Folder*.
 
 ### What your PC needs
 
@@ -93,6 +146,44 @@ What the installer adds, and why:
 
 Optional: `zenity` gives the Start shortcut a proper dialog; without it you
 get a desktop notification or a small Qt window instead.
+
+**System files it puts in place** (with `sudo`): the udev rule in
+`udev/99-g510-lcd.rules` (stable `/dev/g510-lcd` and `/dev/g510-keys`
+links, backlight access for the `input` group) and a hwdb remap,
+`udev/91-g510-stop-to-playpause.hwdb`, that makes the keyboard's
+**Stop** media key send **Play/Pause**. To get the real Stop key back,
+delete `/etc/udev/hwdb.d/91-g510-stop-to-playpause.hwdb` and run
+`sudo systemd-hwdb update`.
+
+## What happens when…
+
+| Situation | What happens |
+|---|---|
+| You plug or unplug the headset jack (or the keyboard) | The keyboard re-enumerates as USB ID `046d:c22d` (no headset) or `046d:c22e` (headset); the udev rule matches both. The buttons listener and macro service reconnect in the same process (every 200 ms for 10 s, then every 3 s), no service restart needed |
+| The LCD device is missing | The LCD program logs it once when it disappears and once when it's back, instead of on every frame |
+| You reboot or log in | The three services start at login; the backlight colour is restored at login (`g510-backlight-restore`) and on every replug (udev) |
+| No visualizer or media element is on screen | No audio capture and no `playerctl` calls at all |
+| A media player hangs | Song lookups give up after 2 s instead of freezing the LCD and the L-buttons |
+| A song title is too long | It is cut short with a `.` so it never runs off the 160 px screen; title and artist stay centred |
+| A sensor doesn't exist on your PC | That reading shows `N/A`; everything else keeps working |
+| The bundled label font is missing or damaged | A second bundled font is used, then the LCD library's built-in font. The LCD always starts |
+| `macros.json` is damaged | It is copied aside (`macros.json.broken-<time>`) before anything is saved, and the app tells you where; macros that could be read are kept |
+| Something unexpected goes wrong in the app | The error is logged and shown once; the app keeps running |
+| The root-run backlight script reads your colour file | It only parses brightness and RGB numbers (0–255) and runs nothing from the file; it reads it as you, not as root |
+| You re-run `./install.sh` | It only adds what's missing; it refuses to run as root |
+
+## Tested
+
+| Check | Result | Source |
+|---|---|---|
+| Automated tests (`tests/run-tests.sh`) | **194 checks in 11 suites, all passing.** Offscreen, scratch folders: never touches your keyboard or saved settings | one run of the suite |
+| Daily use | Arch family, on the developer's own G510s | this README |
+| Ubuntu 24.04 | Fresh VM for every round: installer exits 0, all services active with 0 restarts after re-login, a real macro keystroke (Ctrl+C) arrives, everything comes back after a reboot | PR #10, #11 |
+| Memory (the LCD service) | Overnight soak of the live service: **9 h 18 m, RSS flat at 5,532 KB**, 0 restarts. `scripts/leak-check.sh` guards against the old FreeType leak | PR #1 |
+| System impact | On the stats screen: no audio capture process and no extra CPU from child processes | PR #4 |
+| Sanitizers | ASan + UBSan: 0 reports on the C tests and every `--preview` screen | PR #7, #13 |
+| Rendering | LCD output compared pixel by pixel before and after changes (`--preview`) | PR #7, #13, #15 |
+| Sensors | AMD hardware checked on a real machine; Intel, NVIDIA and the rest covered by tests against simulated sensor trees | [Sensors](#sensors-what-shows-up-on-which-hardware) |
 
 ## Sensors: what shows up on which hardware
 
@@ -153,6 +244,26 @@ The file is plain text, so any other program can feed the LCD the same way: a he
 — `key`, `kind` (`temp` / `rpm` / `pct`), a short label (max 4 characters), a long label,
 and the value (empty if unknown). It must be rewritten at least every 15 seconds.
 
+## Custom screens
+
+L1 is built in (stats ⇄ clock). **L2–L5 are yours**: open the app's
+**Custom Screens** tab, pick a screen and add:
+
+- **sensors**, as a **Number** or a **Bar** (bars only for readings with
+  an honest 0–100 % or temperature range), in up to four text sizes;
+- **text** labels;
+- **images** — any picture is shrunk and converted for the 1-bit
+  screen; flat, high-contrast logos work best;
+- one **visualizer**.
+
+Drag anything on the preview to move it; hover a bar's end or an
+image's corner to resize it. Every change saves itself instantly — no
+Save button needed. Per screen: up to 8 sensors, 2 images, 4 text
+fields and 1 visualizer. The screen is 160×43 pixels, and the preview
+is drawn by the same code as the real LCD, so what you see is what the
+keyboard shows. Full walkthrough:
+[`G510_CUSTOM_SCREENS_HOWTO.md`](G510_CUSTOM_SCREENS_HOWTO.md).
+
 ## The audio visualizer
 
 Drop a visualizer onto any of L2–L5 and the LCD becomes a tiny live
@@ -168,6 +279,18 @@ LCD; on the stats or clock screen the audio capture and song lookups
 stop completely.
 
 ## How it works
+
+```mermaid
+flowchart LR
+    K["G510s keyboard"] -- "L1–L5 keys<br/>/dev/g510-keys" --> B["g510-lcd-buttons (C)"]
+    K -- "G1–G18, M1–M3<br/>/dev/g510-keys" --> M["g510-macro-daemon (Python)"]
+    B -- "which screen" --> S["g510-lcd-stats (C)"]
+    S -- "frames<br/>/dev/g510-lcd (hidraw)" --> K
+    M -- "keystrokes / commands" --> Y["ydotool"]
+    A["G510s Control app (PyQt5)"] -- "custom_screens.txt<br/>macros.json" --> S
+    A -- "--preview" --> S
+    A -- "colour" --> L["/sys/class/leds/g15::kbd_backlight"]
+```
 
 Three small programs run as systemd `--user` services:
 
@@ -187,6 +310,9 @@ rule in `udev/`, not device numbers that change between boots. The
 keyboard drops off USB and comes back whenever its headset jack is
 plugged or unplugged; everything reconnects on its own.
 
+Your own settings (custom screens, imported images, macros, boot
+colour) live in `~/.local/share/g510-lcd`, not in the checkout.
+
 Run the tests with `tests/run-tests.sh` — nothing in them touches your
 keyboard or your saved settings.
 
@@ -199,10 +325,13 @@ keyboard or your saved settings.
 
 ## Docs
 
+- [`docs/index.html`](docs/index.html) — the project's landing page.
 - [`G510_README.md`](G510_README.md) — the full story: protocol
   details, every bug hit and fixed, fonts, udev rules.
 - [`G510_CUSTOM_SCREENS_HOWTO.md`](G510_CUSTOM_SCREENS_HOWTO.md) — how
   to use the Custom Screens editor.
+- [`READY_FOR_ANYONE.md`](READY_FOR_ANYONE.md) — why nothing in the
+  install is tied to one machine or one checkout path.
 - [`BRANCHES.md`](BRANCHES.md) — branch history.
 
 **Looking for the G910?** That app moved to its own repo:
