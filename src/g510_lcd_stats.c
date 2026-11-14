@@ -1690,9 +1690,144 @@ static const sensor_def_t SENSORS[] = {
     {"MB_TEMP6", "MB6", 0, 1, 0},
 };
 
+/* FanPilot sensors (2026-11-14). FanPilot (separate project, the fan-control
+   service) rewrites /run/fanpilot/sensors.tsv once a second with every sensor
+   it knows under a friendly name, plus fan RPM and duty -- things this program
+   can't see itself. Format (tab-separated, one header line):
+       # fanpilot-sensors 1 <unix-time>
+       <key> <kind: temp|rpm|pct> <short label, <=4 chars> <long label> <value or empty>
+   A custom-screen element uses it as sensor=FP:<key>. Missing file, wrong
+   version or a timestamp older than FP_MAX_AGE (FanPilot stopped) -> "N/A";
+   nothing here ever blocks or fails hard, so without FanPilot the LCD behaves
+   exactly as before. Read at most once per second (the file is on tmpfs). */
+static const char *g_fanpilot_path = "/run/fanpilot/sensors.tsv"; /* tests point this elsewhere */
+#define FP_MAX 64
+#define FP_MAX_AGE 15  /* FanPilot rewrites every tick; its interval may be set up to 5 s */
+typedef struct {
+    char key[48];
+    char kind[8];
+    char shortl[8];
+    char label[64];
+    double value;
+    int has_value;
+} fp_row_t;
+static fp_row_t g_fp[FP_MAX];
+static sensor_def_t g_fp_defs[FP_MAX];
+static int g_fp_count = 0;
+static time_t g_fp_loaded = 0;
+
+/* copy field [start, end) into dst, always NUL-terminated */
+static void fp_copy(char *dst, size_t dstlen, const char *start, const char *end) {
+    size_t n = (size_t)(end - start);
+    if (n >= dstlen) n = dstlen - 1;
+    memcpy(dst, start, n);
+    dst[n] = 0;
+}
+
+static void fanpilot_load(int force) {
+    time_t now = time(NULL);
+    if (!force && now == g_fp_loaded) return;
+    g_fp_loaded = now;
+    g_fp_count = 0;
+    FILE *f = fopen(g_fanpilot_path, "r");
+    if (!f) return;
+    char line[256];
+    int version = 0;
+    long long stamp = 0;
+    if (!fgets(line, sizeof(line), f)
+        || sscanf(line, "# fanpilot-sensors %d %lld", &version, &stamp) != 2
+        || version != 1 || stamp < 0 || stamp > (long long)now + FP_MAX_AGE
+        || (long long)now - stamp > FP_MAX_AGE) {
+        fclose(f);
+        return;
+    }
+    while (g_fp_count < FP_MAX && fgets(line, sizeof(line), f)) {
+        /* Length from what fgets stored, not strchr: a stray NUL byte must not
+           make a normal line look over-long (which used to swallow the NEXT
+           line too). A last line without '\n' at end of file is fine. */
+        size_t len = strlen(line);
+        int complete = len > 0 && line[len - 1] == '\n';
+        if (!complete && len == sizeof(line) - 1 && !feof(f)) {
+            int ch;                     /* over-long line: skip the rest of it */
+            while ((ch = fgetc(f)) != EOF && ch != '\n') {}
+            continue;
+        }
+        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) line[--len] = 0;
+        const char *field[5];
+        const char *ends[5];
+        const char *p = line;
+        int n = 0;
+        while (n < 5) {
+            field[n] = p;
+            const char *tab = strchr(p, '\t');
+            ends[n] = tab ? tab : p + strlen(p);
+            n++;
+            if (!tab) break;
+            p = tab + 1;
+        }
+        if (n != 5 || *ends[4] == '\t' || ends[0] == field[0]) continue;   /* exactly 5 fields */
+        if ((size_t)(ends[0] - field[0]) >= sizeof(g_fp[0].key)) continue;  /* never truncate a key */
+        fp_row_t *r = &g_fp[g_fp_count];
+        fp_copy(r->key, sizeof(r->key), field[0], ends[0]);
+        fp_copy(r->kind, sizeof(r->kind), field[1], ends[1]);
+        fp_copy(r->shortl, sizeof(r->shortl), field[2], ends[2]);
+        fp_copy(r->label, sizeof(r->label), field[3], ends[3]);
+        char val[32];
+        fp_copy(val, sizeof(val), field[4], ends[4]);
+        char *endp = NULL;
+        r->value = strtod(val, &endp);
+        r->has_value = val[0] && endp && *endp == 0 && isfinite(r->value) && fabs(r->value) < 1e6;
+        if (strcmp(r->kind, "temp") && strcmp(r->kind, "rpm") && strcmp(r->kind, "pct")) continue;
+        sensor_def_t *d = &g_fp_defs[g_fp_count];
+        d->key = r->key;
+        d->label = r->shortl;
+        d->is_percent = strcmp(r->kind, "pct") == 0;
+        d->is_temp = strcmp(r->kind, "temp") == 0;
+        d->auto_center = 0;
+        g_fp_count++;
+    }
+    fclose(f);
+}
+
+static int fanpilot_index(const char *fp_key) {
+    fanpilot_load(0);
+    for (int i = 0; i < g_fp_count; i++)
+        if (strcmp(g_fp[i].key, fp_key) == 0) return i;
+    return -1;
+}
+
+/* `--sensors`: what FanPilot currently offers (sensor=FP:<key>) */
+static void print_fanpilot_report(void) {
+    /* Most users don't have FanPilot: say nothing about it unless its file exists. */
+    if (access(g_fanpilot_path, F_OK) != 0) return;
+    fanpilot_load(1);
+    printf("\nFanPilot : ");
+    if (!g_fp_count) {
+        printf("not running / no fresh %s -> FP: sensors show N/A\n", g_fanpilot_path);
+        return;
+    }
+    printf("%d sensors from %s (use as sensor=FP:<key>)\n", g_fp_count, g_fanpilot_path);
+    for (int i = 0; i < g_fp_count; i++) {
+        printf("           %-24s %-4s %-28s ", g_fp[i].key, g_fp[i].shortl, g_fp[i].label);
+        if (g_fp[i].has_value)
+            printf("%.1f %s\n", g_fp[i].value,
+                   !strcmp(g_fp[i].kind, "temp") ? "C" : !strcmp(g_fp[i].kind, "pct") ? "%" : "rpm");
+        else
+            printf("N/A\n");
+    }
+}
+
+/* Shown for an FP: element while FanPilot isn't running: the element stays
+   on screen (label "FP", value "N/A") instead of silently disappearing. */
+static const sensor_def_t g_fp_missing = {"FP:", "FP", 0, 0, 0};
+
 static const sensor_def_t *find_sensor(const char *key) {
     for (size_t i = 0; i < sizeof(SENSORS) / sizeof(SENSORS[0]); i++)
         if (strcmp(SENSORS[i].key, key) == 0) return &SENSORS[i];
+    if (strncmp(key, "FP:", 3) == 0 && key[3]) {
+        int i = fanpilot_index(key + 3);
+        return i >= 0 ? &g_fp_defs[i] : &g_fp_missing;
+    }
     return NULL;
 }
 
@@ -1778,6 +1913,18 @@ static void get_sensor_value(const char *key, double *pct_for_bar, char *disp, s
     } else if (strncmp(key, "MB_TEMP", 7) == 0) {
         int n = atoi(key + 7);
         format_temp(n > 0 ? hwmon_temp_c(&g_hwmon_board, n) : -1, pct_for_bar, disp, displen);
+    } else if (strncmp(key, "FP:", 3) == 0) {
+        int i = fanpilot_index(key + 3);
+        if (i < 0 || !g_fp[i].has_value || g_fp[i].value < 0) { snprintf(disp, displen, "N/A"); return; }
+        double v = g_fp[i].value;
+        if (strcmp(g_fp[i].kind, "temp") == 0) {
+            format_temp((int)(v + 0.5), pct_for_bar, disp, displen);
+        } else if (strcmp(g_fp[i].kind, "pct") == 0) {
+            *pct_for_bar = v > 100 ? 100 : v;
+            snprintf(disp, displen, "%d%%", (int)(v + 0.5));
+        } else {                        /* rpm: no honest 0-100 scale */
+            snprintf(disp, displen, "%d", (int)(v + 0.5));
+        }
     }
 }
 
@@ -1786,7 +1933,9 @@ static void get_sensor_value(const char *key, double *pct_for_bar, char *disp, s
 #define MAX_CUSTOM_SCREENS 4 /* L2, L3, L4, L5 */
 
 typedef struct {
-    char sensor[24];
+    char sensor[64]; /* 24 was enough for built-in keys; FanPilot keys are longer
+                        (FP:rpm.it8688/pwm2 ...): "FP:" + up to 47 chars must fit,
+                        and the parser's %63s already allows 63 */
     char style[8]; /* "number" or "bar" */
     int x, y;
     int width; /* bar length in px, only meaningful for style="bar" -- ignored for "number" */
@@ -2070,11 +2219,19 @@ static element_bounds_t g_element_bounds[MAX_ELEMENTS];
 static int g_element_bounds_count = 0;
 
 static void draw_element(g15canvas *c, element_t *el) {
-    const sensor_def_t *def = find_sensor(el->sensor);
-    if (!def) return;
     double pct_for_bar;
     char disp[32];
     get_sensor_value(el->sensor, &pct_for_bar, disp, sizeof(disp));
+    /* Value first, then a private copy of the definition: FanPilot (FP:)
+       definitions live in a table that is refreshed once a second, so a
+       pointer held across that refresh could describe another row. */
+    const sensor_def_t *found = find_sensor(el->sensor);
+    if (!found) return;
+    char label_copy[16];
+    snprintf(label_copy, sizeof(label_copy), "%s", found->label);
+    sensor_def_t def_copy = *found;
+    def_copy.label = label_copy;
+    const sensor_def_t *def = &def_copy;
 
     draw_label(c, el->x, el->y, def->label);
     int label_w = label_text_width(def->label);
@@ -2497,6 +2654,7 @@ int main(int argc, char **argv) {
        (no LCD, no fonts) -- the first thing to run on new hardware. */
     if (argc >= 2 && strcmp(argv[1], "--sensors") == 0) {
         print_sensor_report();
+        print_fanpilot_report();
         return 0;
     }
 

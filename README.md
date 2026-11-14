@@ -129,6 +129,30 @@ src/g510_lcd_stats --sensors
   trees. Reports from other hardware are welcome — include the
   `--sensors` output.
 
+### Optional: FanPilot sensors (fan speeds and more)
+
+Nothing changes unless you also run **FanPilot**, a separate fan-control app (not part of
+this repo). If it's running, the **Custom Screens** sensor dropdown also lists everything
+FanPilot knows, under FanPilot's own names:
+
+- every temperature it shows (CPU, CPU die, GPU edge/hotspot/memory, VRM, chipset,
+  NVMe...), labelled by what it measures instead of `MB_TEMP3`;
+- the **speed (RPM)** of every fan, and its **duty %** while FanPilot controls it.
+
+They appear as **"FanPilot: …"** at the end of the list and draw on the LCD with a short
+label (`CPU`, `VRM`, `SYS1`, `GPUF`, ...). Temperatures and percentages can be bars;
+RPM is a number.
+
+How it works: FanPilot rewrites `/run/fanpilot/sensors.tsv` once a second (in RAM, no
+disk writes); the LCD program and the app read that file. If FanPilot is stopped or not
+installed, those elements show **N/A** and everything else works exactly as before.
+`src/g510_lcd_stats --sensors` lists what FanPilot currently offers.
+
+The file is plain text, so any other program can feed the LCD the same way: a header line
+`# fanpilot-sensors 1 <unix time>`, then one line per sensor with five tab-separated fields
+— `key`, `kind` (`temp` / `rpm` / `pct`), a short label (max 4 characters), a long label,
+and the value (empty if unknown). It must be rewritten at least every 15 seconds.
+
 ## The audio visualizer
 
 Drop a visualizer onto any of L2–L5 and the LCD becomes a tiny live
