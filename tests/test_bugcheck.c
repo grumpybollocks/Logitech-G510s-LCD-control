@@ -134,6 +134,22 @@ int main(void) {
         CHECK(took < 3500, "media query with a hung player returns in %ld ms (was 8000 here, 25 s per player in real life)", took);
     }
 
+    /* 8. the secondary disk is a setting, not a compiled-in drive name */
+    {
+        char cfg[500];
+        snprintf(cfg, sizeof cfg, "%s/secondary_disk", data_dir());
+        unlink(cfg);
+        double bar; char d[32];
+        get_sensor_value("DISK_SECONDARY_PCT", &bar, d, sizeof d);
+        CHECK(strcmp(disk_secondary_path(), "") == 0 && strcmp(d, "N/A") == 0, "no setting -> N/A (got '%s')", d);
+        char line[400];
+        snprintf(line, sizeof line, "%s\n", TEST_SCRATCH);
+        put(cfg, line);
+        get_sensor_value("DISK_SECONDARY_PCT", &bar, d, sizeof d);
+        CHECK(strcmp(disk_secondary_path(), TEST_SCRATCH) == 0 && strchr(d, '%') && bar >= 0,
+              "setting file -> that folder's disk usage (got '%s')", d);
+    }
+
     printf("bugcheck: %d passed, %d failed\n", passes, fails);
     return fails ? 1 : 0;
 }

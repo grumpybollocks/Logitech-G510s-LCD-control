@@ -1266,24 +1266,22 @@ static const char *custom_screens_path(void) {
     return path;
 }
 
-/* An optional removable secondary drive, auto-mounted by udisks2 at
-   the standard /run/media/$USER/<label> convention -- <label> is
-   whatever the drive's own real filesystem volume label is, which
-   this code has no control over (it's a fact about the physical
-   disk, not a choice made here). Built at runtime from $USER rather
-   than baked in at compile time (same reasoning as button_log_path()
-   in g510_lcd_buttons.c), so this file doesn't hardcode a username.
-   On a machine without this exact drive, get_disk_percent() already
-   handles the path not existing by showing "N/A" rather than
-   crashing. EDIT THE LABEL BELOW to match your own drive's real
-   volume label if you want the DISK_SECONDARY_PCT sensor to point at
-   it, or just don't use that sensor. */
-#define SECONDARY_DISK_LABEL "frigider"
-
+/* An optional secondary drive for the DISK_SECONDARY_PCT sensor. (2026-11-14)
+   Its mount folder is a one-line setting file, <data dir>/secondary_disk,
+   written by the app when that sensor is added (it asks for the folder).
+   It used to be a compile-time drive label plus the /run/media/$USER/
+   convention, which only fit the original machine (and Debian/Ubuntu
+   mount under /media/$USER). No setting or no such folder -> "N/A". */
 static const char *disk_secondary_path(void) {
     static char path[256];
-    const char *user = getenv("USER");
-    snprintf(path, sizeof(path), "/run/media/%s/" SECONDARY_DISK_LABEL, user ? user : "nobody");
+    char cfg[300];
+    snprintf(cfg, sizeof(cfg), "%s/secondary_disk", data_dir());
+    path[0] = 0;
+    FILE *f = fopen(cfg, "r");
+    if (f) {
+        if (fgets(path, sizeof(path), f)) path[strcspn(path, "\r\n")] = 0;
+        fclose(f);
+    }
     return path;
 }
 

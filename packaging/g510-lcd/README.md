@@ -80,13 +80,14 @@ per-user `$HOME` to resolve). Fixed properly, not dropped:
 wrapper -- at hotplug time it asks `loginctl` which user actually has
 the active `seat0` session (this is genuinely single-seat desktop
 hardware; broader multi-user handling is out of scope), resolves
-their `$HOME` via `getent passwd`, and execs their own
-`~/.local/share/g510-lcd/set-backlight-color.sh`. Zero `PROJECT_DIR`
-dependency, so both `install.sh` and this PKGBUILD install the exact
-same file to the exact same fixed path
-(`/usr/lib/g510-lcd/restore-backlight.sh`) -- the udev rule itself
-needed no substitution or stripping either way anymore, installed
-byte-identical to the checked-in source.
+their `$HOME` via `getent passwd`, and reads the brightness and colour
+values from their own `~/.local/share/g510-lcd/set-backlight-color.sh`
+-- as that user (setpriv), size- and time-capped, values range-checked;
+it never executes that user-writable file (fixed 2026-11-10). Zero `PROJECT_DIR`
+dependency. This PKGBUILD installs it to `/usr/lib/g510-lcd/restore-backlight.sh`
+and the udev rule byte-identical to the checked-in source; `install.sh`
+(2026-11-14) installs its own copy to `/usr/local/lib/g510-lcd/` and fills that
+path into its own copies of the rule and the login unit.
 
 Verified for real, not just read: ran the script directly on the real
 machine (`bash -x`, full trace) -- correctly resolved the real
@@ -95,14 +96,14 @@ the LED sysfs state matched afterward. This is the same mechanism a
 real hotplug event would trigger, just invoked manually instead of
 waiting for a physical replug.
 
-One minor, honest wrinkle: on a machine with both install methods
-present (like this one, right now), `/usr/lib/g510-lcd/` is a path
-`pacman` considers package-owned once this PKGBUILD is installed --
-`install.sh`'s own `sudo cp` into that same path writes outside
-`pacman`'s bookkeeping. Harmless in practice (both methods copy the
-exact same file content), but worth knowing before treating
-`pacman -Qkk g510-lcd` as gospel on a machine that's also run
-`install.sh`.
+Why the two paths differ now: both methods used to write the same
+`/usr/lib/g510-lcd/restore-backlight.sh`. With the package installed,
+`install.sh` silently modified a package-owned file (`pacman -Qkk` reports
+it), and a package reinstall or "restore modified files" would put the
+package's (possibly older) copy back -- for a script udev runs as root.
+The other order failed outright (pacman: "exists in filesystem"). Use one
+method per machine; if you switch from the package to `install.sh`, remove
+the package afterwards (`sudo pacman -R g510-lcd`).
 
 ## Resolved: the label font
 
