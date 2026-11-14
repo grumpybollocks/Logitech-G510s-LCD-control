@@ -172,5 +172,78 @@ check(tab._choose_secondary_disk() is True and cfg_file.read_text().strip() == S
 n = len(asked)
 check(tab._choose_secondary_disk() is True and len(asked) == n, "not asked again while that folder exists")
 
+# ---- review of the fixes (2026-11-14)
+# a: 16-bit grayscale and big transparent palette images still convert
+i16 = os.path.join(SCRATCH, "i16.png")
+Image.new("I;16", (300, 200), 30000).save(i16)
+r = subprocess.run([sys.executable, "-I", conv, i16, out, "60", "43"], capture_output=True, text=True, timeout=60)
+check(r.returncode == 0, f"16-bit grayscale PNG converts ({r.stderr.strip()[:60]})")
+pal = Image.new("P", (3000, 2000), 0)
+pal.putpalette([255, 255, 255, 0, 0, 0] + [0] * 762)
+pal.paste(1, (1000, 600, 2000, 1400))                   # black square on a transparent background
+pal.info["transparency"] = 0
+palp = os.path.join(SCRATCH, "pal.png")
+pal.save(palp, transparency=0)
+r = subprocess.run([sys.executable, "-I", conv, palp, out, "60", "43"], capture_output=True, text=True, timeout=60)
+raw = open(out, "rb").read() if r.returncode == 0 else b""
+check(r.returncode == 0 and any(raw) and not all(b == 0xFF for b in raw),
+      "big transparent palette image converts (background stays background)")
+
+# b: a SECOND, different broken macros.json gets its own copy too
+g.MACROS_BACKUP, g._MACROS_BACKED_UP_SIG, g.MACROS_NEW_BACKUP = None, None, False
+g.MACROS_FILE.write_text('{"M1": {"G1": "a"},')
+g.load_macros()
+first = g.MACROS_BACKUP
+g.MACROS_FILE.write_text('{"M1": {"G1": {"type": "keys", "value": "30:1"}}, "M2": {}, "M3": {}}')
+g.load_macros()
+time.sleep(0.01)
+g.MACROS_FILE.write_text('{"M2": {"G9": "b"},,')
+g.save_macro("M3", "G1", "echo x", kind="command")
+second = g.MACROS_BACKUP
+check(first is not None and second is not None and first != second and second.read_text() == '{"M2": {"G9": "b"},,',
+      "a later, different broken file is copied aside before the save")
+check(g.MACROS_NEW_BACKUP, "and the dialog is told to warn right away")
+
+# c: Save All with no boot-colour file yet (package installs) is not a failure
+g.DEFAULTS_SCRIPT_DATA_DIR.unlink()
+results = []
+QMessageBox.critical = staticmethod(lambda *a, **k: results.append("critical") or QMessageBox.Ok)
+QMessageBox.information = staticmethod(lambda *a, **k: results.append("info") or QMessageBox.Ok)
+g.MACROS_FILE.write_text('{"M1": {}, "M2": {}, "M3": {}}')
+g.MainWindow.on_save_all(fake)
+check(results == ["info"], f"Save All with no boot colour chosen yet -> verified, not FAILED ({results})")
+g.DEFAULTS_SCRIPT_DATA_DIR.write_text('echo 255 > /x/brightness\necho "999 0 0" > /x/multi_intensity\n')
+results.clear()
+g.MainWindow.on_save_all(fake)
+check(results == ["info"], "an out-of-range saved colour is reported as none chosen, like restore-backlight.sh treats it")
+
+# d: existing secondary-disk screens are asked for the drive once, after updating
+if cfg_file.exists():
+    cfg_file.unlink()
+asked.clear()
+QFileDialog.getExistingDirectory = staticmethod(lambda *a, **k: asked.append(1) or "/")
+tab2 = g.CustomScreensTab()
+tab2.config = {k: [] for k in g.CUSTOM_SCREEN_KEYS}
+tab2.config["L3"] = [{"kind": "sensor", "sensor": "DISK_SECONDARY_PCT", "style": "number", "x": 0, "y": 0,
+                      "width": 40, "font_size": 0}]
+tab2.show()
+app.processEvents()
+tab2.hide()
+tab2.show()
+app.processEvents()
+check(len(asked) == 1 and cfg_file.read_text().strip() == "/", "a screen already using the secondary disk asks once")
+
+# e: the same error from a timer does not pop up again and again
+pops = []
+QMessageBox.warning = staticmethod(lambda *a, **k: pops.append(1) or QMessageBox.Ok)
+_real_err, sys.stderr = sys.stderr, io.StringIO()
+for _ in range(5):
+    try:
+        raise OSError(5, "same failure")
+    except OSError:
+        g._report_unexpected_error(*sys.exc_info())
+sys.stderr = _real_err
+check(len(pops) == 1, f"a repeating error shows one popup, not one per tick ({len(pops)})")
+
 print(f"bugcheck app: {passes} passed, {fails} failed")
 sys.exit(1 if fails else 0)

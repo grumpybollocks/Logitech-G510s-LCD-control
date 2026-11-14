@@ -140,8 +140,12 @@ def write_active_profile(name):
         # by the GUI's 500 ms poll (and vice versa for the GUI's write)
         p = profile_path()
         tmp = p.with_name(p.name + f".{os.getpid()}.tmp")
-        tmp.write_text(name)
-        tmp.replace(p)
+        try:
+            tmp.write_text(name)
+            tmp.replace(p)
+        finally:
+            if tmp.exists():
+                tmp.unlink()
     except Exception:
         pass
 

@@ -19,6 +19,7 @@ import json
 import shutil
 import subprocess
 import datetime
+import time
 from pathlib import Path
 
 from PyQt5.QtWidgets import (
@@ -384,7 +385,9 @@ def atomic_write_text(path, content):
         raise
 
 
-MACROS_BACKUP = None   # set when a broken macros.json was copied aside (shown once by the main window)
+MACROS_BACKUP = None          # newest copy of a broken macros.json (shown by the main window / dialogs)
+_MACROS_BACKED_UP_SIG = None  # (size, mtime_ns, inode) of the broken file last copied
+MACROS_NEW_BACKUP = False     # True right after a new copy was made, until someone reports it
 
 
 def _normalized_macros(data):
@@ -403,7 +406,7 @@ def load_macros():
     shape used to come back as empty profiles -- and the next save then wrote
     those over every macro. Now it is first copied aside (macros.json.broken-
     <time>) and the user is told, so nothing is lost."""
-    global MACROS_BACKUP
+    global MACROS_BACKUP, _MACROS_BACKED_UP_SIG, MACROS_NEW_BACKUP
     if not MACROS_FILE.exists():
         return _normalized_macros(None)
     try:
@@ -411,14 +414,22 @@ def load_macros():
         ok = isinstance(data, dict) and all(isinstance(v, dict) for v in data.values())
     except (OSError, ValueError):
         data, ok = None, False
-    if not ok and MACROS_BACKUP is None:
-        backup = MACROS_FILE.with_name(MACROS_FILE.name + ".broken-" +
-                                       datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+    if not ok:
+        # every DIFFERENT broken file gets its own copy (2026-11-14 review: only the
+        # first one per run was kept, so a second hand-edit mistake could still erase macros)
         try:
-            shutil.copy2(MACROS_FILE, backup)
-            MACROS_BACKUP = backup
+            st = MACROS_FILE.stat()
+            sig = (st.st_size, st.st_mtime_ns, st.st_ino)
         except OSError:
-            pass
+            sig = None
+        if sig is None or sig != _MACROS_BACKED_UP_SIG:
+            backup = MACROS_FILE.with_name(MACROS_FILE.name + ".broken-" +
+                                           datetime.datetime.now().strftime("%Y%m%d-%H%M%S-%f"))
+            try:
+                shutil.copy2(MACROS_FILE, backup)
+                MACROS_BACKUP, _MACROS_BACKED_UP_SIG, MACROS_NEW_BACKUP = backup, sig, True
+            except OSError:
+                pass
     return _normalized_macros(data)
 
 
@@ -597,13 +608,10 @@ class MacroRecordDialog(QDialog):
         self._stop_recorder()
         super().reject()
 
-    def accept(self):
-        # (2026-11-14) Save / Save Command / Clear close the dialog through
-        # accept(): without this the recorder kept the whole keyboard
-        # grabbed after the dialog was gone -- no typing anywhere until
-        # the app was killed.
-        self._stop_recorder()
-        super().accept()
+    # (2026-11-14) Save / Save Command / Clear close the dialog through accept()
+    # (defined below, next to the macros-backup notice): it stops the recorder
+    # too -- without that the whole keyboard stayed grabbed after the dialog
+    # was gone, no typing anywhere until the app was killed.
 
     def on_recorded(self, sequence, ok):
         self.recorded_sequence = sequence
@@ -623,6 +631,20 @@ class MacroRecordDialog(QDialog):
             return
         self.status_label.setText(f"Captured {len(sequence.split())} events. Click Save to keep it.")
         self.save_btn.setEnabled(bool(sequence))
+
+    def _report_macros_backup(self):
+        """Tell the user right away if saving found macros.json damaged."""
+        global MACROS_NEW_BACKUP
+        if MACROS_NEW_BACKUP and MACROS_BACKUP is not None:
+            MACROS_NEW_BACKUP = False
+            QMessageBox.warning(self, "Macros file was damaged",
+                                f"{MACROS_FILE} could not be read, so only readable macros were kept.\n\n"
+                                f"The damaged file was copied to:\n{MACROS_BACKUP}")
+
+    def accept(self):
+        self._report_macros_backup()
+        self._stop_recorder()
+        QDialog.accept(self)
 
     def on_save(self):
         if self.recorded_sequence:
@@ -1601,8 +1623,8 @@ class ScreenPreviewCanvas(QWidget):
             el = self._elements[self._resize_index]
             target_w = round(event.pos().x() / PREVIEW_SCALE) - el["x"]
             target_h = round(event.pos().y() / PREVIEW_SCALE) - el["y"]
-            target_w = max(MIN_IMAGE_SIZE, min(LCD_WIDTH - el["x"], target_w))
-            target_h = max(MIN_IMAGE_SIZE, min(LCD_HEIGHT - el["y"], target_h))
+            target_w = max(MIN_IMAGE_SIZE, min(LCD_WIDTH, LCD_WIDTH - el["x"], target_w))
+            target_h = max(MIN_IMAGE_SIZE, min(LCD_HEIGHT, LCD_HEIGHT - el["y"], target_h))
             if self._image_resize_preview_wh != (target_w, target_h):
                 self._image_resize_preview_wh = (target_w, target_h)
                 self.image_resize_requested.emit(self._resize_index, target_w, target_h)
@@ -1614,8 +1636,8 @@ class ScreenPreviewCanvas(QWidget):
             el = self._elements[self._resize_index]
             target_w = round(event.pos().x() / PREVIEW_SCALE) - el["x"]
             target_h = round(event.pos().y() / PREVIEW_SCALE) - el["y"]
-            target_w = max(MIN_IMAGE_SIZE, min(LCD_WIDTH - el["x"], target_w))
-            target_h = max(MIN_IMAGE_SIZE, min(LCD_HEIGHT - el["y"], target_h))
+            target_w = max(MIN_IMAGE_SIZE, min(LCD_WIDTH, LCD_WIDTH - el["x"], target_w))
+            target_h = max(MIN_IMAGE_SIZE, min(LCD_HEIGHT, LCD_HEIGHT - el["y"], target_h))
             if el["width"] != target_w or el["height"] != target_h:
                 el["width"], el["height"] = target_w, target_h
                 self.element_resized.emit(self._resize_index, target_w)
@@ -1996,6 +2018,14 @@ class CustomScreensTab(QWidget):
         # stable, not leaking -- but it's real wasted CPU/subprocess
         # churn fixed for free while auditing.)
         super().showEvent(event)
+        # (2026-11-14) the drive used to be compiled in; screens that already show
+        # it need the new setting once, or they would just say N/A after updating
+        if not getattr(self, "_disk_migration_asked", False):
+            self._disk_migration_asked = True
+            uses = any(el.get("sensor") == "DISK_SECONDARY_PCT"
+                       for els in self.config.values() for el in els)
+            if uses and not (DATA_DIR / "secondary_disk").exists():
+                self._choose_secondary_disk()
         self.preview_timer.start(1000)
         self.refresh_preview()
 
@@ -2080,8 +2110,8 @@ class CustomScreensTab(QWidget):
             current = cfg.read_text().strip()
         except OSError:
             current = ""
-        if current and Path(current).is_dir():
-            return True
+        if current:
+            return True        # chosen before; the drive may just not be mounted right now
         user = os.environ.get("USER", "")
         start = next((d for d in (f"/run/media/{user}", f"/media/{user}", "/mnt") if Path(d).is_dir()), str(Path.home()))
         from PyQt5.QtWidgets import QFileDialog
@@ -2094,12 +2124,12 @@ class CustomScreensTab(QWidget):
     def on_add_element(self):
         if self.current_screen == "L1":
             return  # button is disabled for this case, this is just a safety guard
-        if self.sensor_combo.currentData() == "DISK_SECONDARY_PCT" and not self._choose_secondary_disk():
-            return
         elements = self.config[self.current_screen]
         sensor_count = sum(1 for el in elements if el.get("kind", "sensor") == "sensor")
         if sensor_count >= 8:
             QMessageBox.warning(self, "Screen full", "Each screen supports up to 8 sensor elements.")
+            return
+        if self.sensor_combo.currentData() == "DISK_SECONDARY_PCT" and not self._choose_secondary_disk():
             return
         # No X/Y fields anymore -- new elements land at a default spot
         # (stacked below whatever's already there) and you drag them
@@ -2694,12 +2724,16 @@ class MainWindow(QMainWindow):
         # reports what is really saved, and mentions an unsaved preview.
         try:
             import re
-            on_disk = DEFAULTS_SCRIPT_DATA_DIR.read_text()
-            m = re.search(r'"(\d{1,3}) (\d{1,3}) (\d{1,3})"\s*>\s*\S*multi_intensity', on_disk)
-            if not m:
-                problems.append("Backlight: no boot colour saved yet (use Set as Default)")
+            try:
+                on_disk = DEFAULTS_SCRIPT_DATA_DIR.read_text()
+            except FileNotFoundError:
+                on_disk = ""            # package installs: nothing chosen yet -- not a failure
+            # same shape restore-backlight.sh accepts: an 'echo "R G B" > ...multi_intensity' line, 0-255 each
+            m = re.search(r'^\s*echo\s+"(\d{1,3}) (\d{1,3}) (\d{1,3})"\s*>\s*\S*multi_intensity\s*$', on_disk, re.M)
+            saved = tuple(int(x) for x in m.groups()) if m else None
+            if saved is None or max(saved) > 255:
+                detail_lines.append("    Boot color: none chosen yet (use Set as Default)")
             else:
-                saved = tuple(int(x) for x in m.groups())
                 detail_lines.append(f"    Boot color: #{saved[0]:02x}{saved[1]:02x}{saved[2]:02x}")
                 pending = tuple(self.keyboard_tab._pending_rgb)
                 if pending != saved:
@@ -2725,7 +2759,7 @@ class MainWindow(QMainWindow):
                     detail_lines.append(f"    {profile}: {macro_counts[profile]} macro(s) assigned")
             else:
                 detail_lines.append("    (no macros assigned yet)")
-        except (OSError, json.JSONDecodeError) as e:
+        except (OSError, ValueError) as e:      # ValueError: bad JSON or not UTF-8
             problems.append(f"Macros: {e}")
 
         now = datetime.datetime.now().strftime("%H:%M:%S")
@@ -2767,6 +2801,12 @@ def _report_unexpected_error(exc_type, exc, tb):
     if issubclass(exc_type, KeyboardInterrupt):
         QApplication.quit()
         return
+    key = (exc_type.__name__, str(exc))
+    now = time.monotonic()
+    last = getattr(_report_unexpected_error, "_last", (None, -1e9))
+    if key == last[0] and now - last[1] < 60:
+        return                     # same error again (e.g. from a timer): logged, but no popup storm
+    _report_unexpected_error._last = (key, now)
     try:
         QMessageBox.warning(None, "G510s Control -- something went wrong",
                             f"{exc_type.__name__}: {exc}\n\nThe app keeps running; the last change may not "
@@ -2780,7 +2820,8 @@ if __name__ == "__main__":
     sys.excepthook = _report_unexpected_error
     win = MainWindow()
     win.show()
-    if MACROS_BACKUP is not None:
+    if MACROS_BACKUP is not None and MACROS_NEW_BACKUP:
+        MACROS_NEW_BACKUP = False
         QMessageBox.warning(win, "Macros file could not be read",
                             f"{MACROS_FILE} is damaged (not valid JSON, or not in the expected shape).\n\n"
                             f"A copy was kept as:\n{MACROS_BACKUP}\n\n"

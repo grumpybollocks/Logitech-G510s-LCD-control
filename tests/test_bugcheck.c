@@ -132,6 +132,9 @@ int main(void) {
         update_media_info();
         long took = now_ms() - t0;
         CHECK(took < 3500, "media query with a hung player returns in %ld ms (was 8000 here, 25 s per player in real life)", took);
+        t0 = now_ms();
+        update_media_info();
+        CHECK(now_ms() - t0 < 200, "next query is skipped for 30 s instead of stalling again (%ld ms)", now_ms() - t0);
     }
 
     /* 8. the secondary disk is a setting, not a compiled-in drive name */
@@ -146,8 +149,11 @@ int main(void) {
         snprintf(line, sizeof line, "%s\n", TEST_SCRATCH);
         put(cfg, line);
         get_sensor_value("DISK_SECONDARY_PCT", &bar, d, sizeof d);
-        CHECK(strcmp(disk_secondary_path(), TEST_SCRATCH) == 0 && strchr(d, '%') && bar >= 0,
-              "setting file -> that folder's disk usage (got '%s')", d);
+        CHECK(strcmp(disk_secondary_path(), TEST_SCRATCH) == 0 && strcmp(d, "N/A") == 0,
+              "a plain folder (drive not mounted there) -> N/A, not the root fs usage (got '%s')", d);
+        put(cfg, "/\n");          /* "/" is always a mountpoint */
+        get_sensor_value("DISK_SECONDARY_PCT", &bar, d, sizeof d);
+        CHECK(strchr(d, '%') && bar >= 0, "setting pointing at a mounted filesystem -> its usage (got '%s')", d);
     }
 
     printf("bugcheck: %d passed, %d failed\n", passes, fails);

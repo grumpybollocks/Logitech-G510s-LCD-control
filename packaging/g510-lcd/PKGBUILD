@@ -102,10 +102,10 @@ EOF
   # wrapper finds whoever actually has the active seat0 session via
   # loginctl at hotplug time instead, then reads (never executes -- see
   # the script) the colour saved in THEIR ~/.local/share/g510-lcd/
-  # set-backlight-color.sh. Zero PROJECT_DIR
-  # dependency, so it's installed at the exact same fixed path
-  # install.sh also uses -- the udev rule itself is identical either
-  # way, dev checkout or real package.
+  # set-backlight-color.sh. Zero PROJECT_DIR dependency: installed at a
+  # fixed path, with the checked-in udev rule byte-identical. (install.sh
+  # uses /usr/local/lib/g510-lcd instead and rewrites its own rule copy, so
+  # the two methods never fight over this file.)
   install -Dm755 scripts/restore-backlight.sh "$pkgdir/usr/lib/$pkgname/restore-backlight.sh"
 
   install -Dm644 packaging/g510-lcd/g510-lcd.desktop \

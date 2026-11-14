@@ -7,4 +7,6 @@ post_install() {
     echo "     sudo usermod -aG input \$USER"
     echo "   then, as your normal user:"
     echo "     systemctl --user enable --now g510-lcd-stats g510-lcd-buttons g510-macro-daemon"
+    echo "   G-key macros replay keystrokes through ydotool: also enable its user service"
+    echo "     systemctl --user enable --now ydotool"
 }

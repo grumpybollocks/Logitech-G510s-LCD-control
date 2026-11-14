@@ -296,10 +296,28 @@ LIBDIR=/usr/local/lib/g510-lcd
 # file (a package reinstall silently put its own copy back). The repo's rule
 # and login unit name the package path; this installer fills in its own.
 $SUDO install -Dm755 scripts/restore-backlight.sh "$LIBDIR/restore-backlight.sh"
-rule_tmp=$(mktemp)
-sed "s|/usr/lib/g510-lcd/|$LIBDIR/|g" udev/99-g510-lcd.rules > "$rule_tmp"
-$SUDO install -Dm644 "$rule_tmp" /etc/udev/rules.d/99-g510-lcd.rules
-rm -f "$rule_tmp"
+sed "s|/usr/lib/g510-lcd/|$LIBDIR/|g" udev/99-g510-lcd.rules > "$WORK/99-g510-lcd.rules"   # $WORK is cleaned on exit
+$SUDO install -Dm644 "$WORK/99-g510-lcd.rules" /etc/udev/rules.d/99-g510-lcd.rules
+# An older install.sh put its copy in /usr/lib/g510-lcd. Nothing uses it any
+# more; remove it -- but only if no package owns it (then it's the package's).
+OLD_RESTORE=/usr/lib/g510-lcd/restore-backlight.sh
+if [ -f "$OLD_RESTORE" ]; then
+    owned=0
+    case "$FAMILY" in
+        arch)          pacman -Qo "$OLD_RESTORE" &>/dev/null && owned=1 ;;
+        debian)        dpkg -S "$OLD_RESTORE" &>/dev/null && owned=1 ;;
+        fedora|suse)   rpm -qf "$OLD_RESTORE" &>/dev/null && owned=1 ;;
+        *)             owned=1 ;;   # can't tell: leave it alone
+    esac
+    if [ "$owned" = 0 ]; then
+        $SUDO rm -f "$OLD_RESTORE"
+        $SUDO rmdir /usr/lib/g510-lcd 2>/dev/null || true
+        echo "  [ok]      removed the old copy $OLD_RESTORE (now in $LIBDIR)"
+    else
+        echo "  [note]    $OLD_RESTORE belongs to an installed package; this install uses $LIBDIR."
+        echo "            Use one method per machine: if you meant to switch, remove that package."
+    fi
+fi
 $SUDO mkdir -p /etc/udev/hwdb.d
 $SUDO cp udev/91-g510-stop-to-playpause.hwdb /etc/udev/hwdb.d/91-g510-stop-to-playpause.hwdb
 $SUDO udevadm control --reload-rules
