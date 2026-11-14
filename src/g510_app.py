@@ -19,6 +19,7 @@ import json
 import shutil
 import subprocess
 import datetime
+import math
 from pathlib import Path
 
 from PyQt5.QtWidgets import (
@@ -967,6 +968,73 @@ BAR_CAPABLE_SENSORS = {
 # pattern as this project's other old-path/old-key migrations.
 LEGACY_SENSOR_ALIASES = {"DISK_FRIGIDER_PCT": "DISK_SECONDARY_PCT"}
 
+# --- FanPilot sensors (2026-11-14) ---------------------------------------
+# FanPilot (the fan-control app, separate project) writes every sensor it
+# knows -- with its friendly names, plus fan RPM and duty -- to this file
+# once a second. Elements use them as sensor=FP:<key>; g510_lcd_stats.c
+# reads the same file (see fanpilot_load() there). Without FanPilot the
+# dropdown is exactly what it was before.
+FANPILOT_SENSORS_FILE = "/run/fanpilot/sensors.tsv"
+FANPILOT_DAEMON = "/usr/local/bin/fanpilotd"
+FANPILOT_MAX_AGE = 15  # seconds; FanPilot rewrites it every tick (interval up to 5 s)
+_FP_UNITS = {"temp": "°C", "rpm": "RPM", "pct": "%"}
+
+
+def fanpilot_sensors(path=None, max_age=FANPILOT_MAX_AGE):
+    """FanPilot's current sensor list, [] if FanPilot isn't running.
+    Each item: {key (with FP: prefix), kind, short, label, value}."""
+    try:
+        with open(path or FANPILOT_SENSORS_FILE, encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return []
+    head = lines[0].split() if lines else []
+    if len(head) < 4 or head[:2] != ["#", "fanpilot-sensors"] or head[2] != "1":
+        return []
+    try:
+        if abs(datetime.datetime.now().timestamp() - int(head[3])) > max_age:
+            return []
+    except ValueError:
+        return []
+    out = []
+    for line in lines[1:]:
+        f = line.split("\t")
+        if len(f) != 5 or not f[0] or f[1] not in _FP_UNITS:
+            continue
+        if len(f[0]) > 47:
+            continue  # longer keys can't be stored by the LCD program (same rule as the C reader)
+        try:
+            value = float(f[4]) if f[4] else None
+        except ValueError:
+            value = None
+        if value is not None and (not math.isfinite(value) or abs(value) >= 1e6):
+            value = None
+        out.append({"key": "FP:" + f[0], "kind": f[1], "short": f[2], "label": f[3], "value": value})
+    return out
+
+
+def register_fanpilot_sensors(items):
+    """Make FanPilot sensors known to the shared lookup tables (labels,
+    descriptions, bar capability) used by the rest of this tab."""
+    for key in [k for k in BAR_CAPABLE_SENSORS if k.startswith("FP:")]:
+        BAR_CAPABLE_SENSORS.discard(key)    # rebuilt below from the fresh read (a kind may change)
+    for it in items:
+        SENSOR_LABELS[it["key"]] = f"FanPilot: {it['label']}"
+        now = "no reading right now" if it["value"] is None else f"right now {it['value']:g} {_FP_UNITS[it['kind']]}"
+        SENSOR_DESCRIPTIONS[it["key"]] = (
+            f"From FanPilot (your fan-control app): {it['label']} -- {now}. "
+            f"Shown on the LCD as \"{it['short']}\". Shows N/A while FanPilot isn't running.")
+        if it["kind"] in ("temp", "pct"):
+            BAR_CAPABLE_SENSORS.add(it["key"])
+
+
+def sensor_display_name(key):
+    if key in SENSOR_LABELS:
+        return SENSOR_LABELS[key]
+    if key.startswith("FP:"):
+        return f"FanPilot sensor {key[3:]} (FanPilot not running)"
+    return key
+
 CUSTOM_SCREEN_KEYS = ["L2", "L3", "L4", "L5"]
 # L1 is the built-in clock screen (drawn by draw_clock_screen() in C,
 # not draw_custom_screen()) -- it has no ELEMENT lines of its own and
@@ -1760,6 +1828,8 @@ class CustomScreensTab(QWidget):
         self.sensor_combo.setToolTip("Which stat/sensor to add to this screen -- see the description below once picked")
         for key, label in SENSOR_CHOICES:
             self.sensor_combo.addItem(label, key)
+        self._fanpilot_keys = None
+        self.reload_fanpilot_choices()
         self.sensor_combo.currentIndexChanged.connect(self.on_sensor_changed)
         panel_layout.addWidget(self.sensor_combo)
 
@@ -1921,6 +1991,7 @@ class CustomScreensTab(QWidget):
         # stable, not leaking -- but it's real wasted CPU/subprocess
         # churn fixed for free while auditing.)
         super().showEvent(event)
+        self.reload_fanpilot_choices()   # FanPilot may have been started/stopped meanwhile
         self.preview_timer.start(1000)
         self.refresh_preview()
 
@@ -1952,6 +2023,41 @@ class CustomScreensTab(QWidget):
         )
         self.refresh_elements_list()
         self.refresh_preview()
+
+    def reload_fanpilot_choices(self):
+        """(Re)build the FanPilot section at the end of the sensor dropdown.
+        Only touches the dropdown when the set of FanPilot sensors changed,
+        so the current selection is kept."""
+        items = fanpilot_sensors()
+        register_fanpilot_sensors(items)
+        keys = tuple((it["key"], it["label"], it["kind"]) for it in items)
+        installed = os.path.exists(FANPILOT_DAEMON)
+        state = (keys, installed)
+        if state == self._fanpilot_keys:
+            if hasattr(self, "sensor_desc_label"):
+                self.on_sensor_changed()     # same list, but the live value in the description changed
+            return
+        self._fanpilot_keys = state
+        combo = self.sensor_combo
+        current = combo.currentData()
+        combo.blockSignals(True)
+        while combo.count() > len(SENSOR_CHOICES):
+            combo.removeItem(combo.count() - 1)
+        if items:
+            combo.insertSeparator(combo.count())
+            for it in items:
+                combo.addItem(SENSOR_LABELS[it["key"]], it["key"])
+        elif installed:
+            combo.insertSeparator(combo.count())
+            combo.addItem("FanPilot sensors: start FanPilot to use fan speeds and its sensors", None)
+            hint = combo.model().item(combo.count() - 1)
+            if hint is not None:
+                hint.setEnabled(False)
+        idx = combo.findData(current) if current is not None else -1
+        combo.setCurrentIndex(idx if idx >= 0 else 0)
+        combo.blockSignals(False)
+        if hasattr(self, "sensor_desc_label"):
+            self.on_sensor_changed()
 
     def on_sensor_changed(self):
         sensor_key = self.sensor_combo.currentData()
@@ -1999,6 +2105,8 @@ class CustomScreensTab(QWidget):
     def on_add_element(self):
         if self.current_screen == "L1":
             return  # button is disabled for this case, this is just a safety guard
+        if not self.sensor_combo.currentData():
+            return  # a separator or the greyed-out FanPilot hint, not a sensor
         elements = self.config[self.current_screen]
         sensor_count = sum(1 for el in elements if el.get("kind", "sensor") == "sensor")
         if sensor_count >= 8:
@@ -2407,7 +2515,7 @@ class CustomScreensTab(QWidget):
                 text = QLabel("Visualizer (live audio)")
                 text.setToolTip(f"x={el['x']} y={el['y']} {el['width']}x{el['height']}px")
             else:
-                label = SENSOR_LABELS.get(el["sensor"], el["sensor"])
+                label = sensor_display_name(el["sensor"])
                 text = QLabel(f"{label} – {el['style']}")
                 text.setToolTip(f"x={el['x']} y={el['y']}" + (f" width={el.get('width', 40)}" if el.get("style") == "bar" else ""))
             text.setStyleSheet("font-size: 11px;")
