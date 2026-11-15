@@ -76,5 +76,13 @@ QT_QPA_PLATFORM=offscreen python3 -I ./test_bugcheck_app.py 2>&1 \
 [ "${PIPESTATUS[0]}" -eq 0 ] || rc=1
 echo
 
+# 2026-11-15 bug-check of the app (offscreen, scratch HOME, fake evdev --
+# never opens or grabs your keyboard)
+echo "== test_bugcheck_app2"
+QT_QPA_PLATFORM=offscreen python3 -I ./test_bugcheck_app2.py 2>&1 \
+    | grep -v -e 'preview error' -e 'propagateSizeHints' -e 'QStandardPaths' | sed 's/^/  /'
+[ "${PIPESTATUS[0]}" -eq 0 ] || rc=1
+echo
+
 [ $rc -eq 0 ] && echo "ALL TESTS PASSED" || echo "SOME TESTS FAILED"
 exit $rc

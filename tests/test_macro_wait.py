@@ -69,5 +69,51 @@ check(sleeps[0] == m.POLL_FAST_S and sleeps[-1] == m.POLL_SLOW_S, f"backs off {s
 fast = sum(1 for s in sleeps if s == m.POLL_FAST_S)
 check(abs(fast * m.POLL_FAST_S - m.POLL_FAST_FOR_S) < 0.5, f"fast polling lasts ~{m.POLL_FAST_FOR_S:.0f} s ({fast} polls)")
 
-print("\nmacro wait: " + ("all passed" if not fails else f"{fails} FAILED"))
+# 2026-11-15: command macros must not live in the macro service's cgroup
+# (KillMode=control-group killed every G-key-launched app on a service
+# restart) -> own transient unit via systemd-run, direct launch as fallback.
+class Proc:
+    def __init__(self, args):
+        self.args, self.rc = args, None
+
+    def poll(self):
+        return self.rc
+
+
+launched = []
+
+
+def fake_popen(args, **kw):
+    launched.append((args, kw))
+    return Proc(args)
+
+
+real_popen, real_which = m.subprocess.Popen, m.shutil.which
+m.subprocess.Popen = fake_popen
+try:
+    m.shutil.which = lambda name: "/usr/bin/" + name
+    p, fb = m.launch_command("firefox --new-window")
+    args, kw = launched[-1]
+    check(isinstance(args, list) and args[:2] == ["systemd-run", "--user"] and "--collect" in args
+          and args[-3:] == ["sh", "-c", "firefox --new-window"] and not kw.get("shell"),
+          "a command macro is started in its own systemd-run --user unit")
+    check(fb == "firefox --new-window", "the command is kept for a fallback launch")
+    p.rc = 0
+    check(m.reap_running([(p, fb)]) == [] and len(launched) == 1, "a successful launcher is just reaped")
+    p.rc = 1
+    with contextlib.redirect_stdout(io.StringIO()):
+        still = m.reap_running([(p, fb)])
+    check(len(launched) == 2 and launched[-1][0] == "firefox --new-window"
+          and launched[-1][1].get("shell") and len(still) == 1 and still[0][1] is None,
+          "a failed systemd-run falls back to a direct launch (once)")
+    m.shutil.which = lambda name: None
+    p, fb = m.launch_command("gimp")
+    check(launched[-1][0] == "gimp" and launched[-1][1].get("shell") and fb is None,
+          "no systemd-run on PATH -> direct launch")
+except AttributeError as e:
+    check(False, f"command launch helpers missing: {e}")
+finally:
+    m.subprocess.Popen, m.shutil.which = real_popen, real_which
+
+print("\nmacro wait: " +("all passed" if not fails else f"{fails} FAILED"))
 sys.exit(1 if fails else 0)
