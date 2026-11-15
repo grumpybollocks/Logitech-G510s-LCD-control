@@ -5,7 +5,7 @@
 **The LCD screen, RGB backlight and G-key macros of the Logitech G510 / G510s, properly working on Linux.**
 
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
-![Platform: Arch | Ubuntu](https://img.shields.io/badge/platform-Arch%20%7C%20Ubuntu%2FDebian-1793d1.svg)
+![Platform: Arch | Ubuntu](https://img.shields.io/badge/platform-Arch%20%7C%20Ubuntu-1793d1.svg)
 ![Languages: C + Python](https://img.shields.io/badge/code-C%20%2B%20Python%203-informational.svg)
 ![Tests](https://img.shields.io/badge/tests-194%20checks%20passing-27ae60.svg)
 ![Keyboard](https://img.shields.io/badge/keyboard-G510%20%2F%20G510s-555.svg)
@@ -82,8 +82,8 @@ cd Logitech-G510s-LCD-control
 ./install.sh
 ```
 
-The installer shows what's already installed and what it will add
-before touching anything, builds the LCD programs, converts the label
+The installer goes through 8 steps and prints `[ok]` or `[missing]` for
+every item as it goes, installing only what's missing; it builds the LCD programs, converts the label
 fonts, sets up the udev rules and services, and adds desktop
 shortcuts. It asks for your `sudo` password once, and for one
 unplug/replug of the keyboard so the new rules take effect
