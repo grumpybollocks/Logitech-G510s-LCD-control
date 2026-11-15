@@ -38,7 +38,13 @@ int main(void) {
     signal(SIGPIPE, SIG_IGN);
     mkdir(DEVDIR, 0755); mkfifo(G510_LCD_DEV, 0600);
     int reader = open(G510_LCD_DEV, O_RDONLY | O_NONBLOCK);
-    for (int i = 0; i < 50; i++) send_frame(&canvas);                         /* 50 x 992 B fits the pipe */
+    /* drain after every frame: the pipe buffer is NOT always 64 KiB -- once a user's pipes exceed
+       fs.pipe-user-pages-soft, new pipes get 4-8 KiB, and 50 x 992 B would block the 5th-9th write forever */
+    char drain[4096];
+    for (int i = 0; i < 50; i++) {
+        send_frame(&canvas);
+        while (read(reader, drain, sizeof drain) > 0) { }
+    }
     fflush(stderr); int b = count_lines(log);
     close(reader); unlink(G510_LCD_DEV); rmdir(DEVDIR);                         /* gone again */
     for (int i = 0; i < 50; i++) send_frame(&canvas);
