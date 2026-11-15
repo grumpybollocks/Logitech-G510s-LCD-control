@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Logitech G510s for Linux</title>
 <meta name="description" content="The LCD screen, RGB backlight and G-key macros of the Logitech G510 / G510s, properly working on Linux: live stats, custom screens, an audio visualizer and macros.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Logitech G510s for Linux">
+<meta property="og:description" content="The LCD screen, RGB backlight and G-key macros of the Logitech G510 / G510s, properly working on Linux: live stats, custom screens, an audio visualizer and macros.">
 <style>
 :root {
   --bg: #f6f7f9; --bg2: #ffffff; --text: #1d2125; --muted: #5b6470; --line: #dde1e6;
@@ -50,7 +53,7 @@ header.hero { padding: 60px 0 36px; text-align: center; }
 .lcd { display: block; background: var(--bezel); padding: 12px; border-radius: 12px; box-shadow: var(--shadow); margin: 0; }
 .lcd img { display: block; width: 100%; height: auto; image-rendering: pixelated; border-radius: 3px; }
 .lcd figcaption { color: #c9cfc4; font-size: 13px; text-align: center; margin-top: 8px; }
-.lcds { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 18px; }
+.lcds { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 18px; }
 section { padding: 56px 0; border-top: 1px solid var(--line); }
 section h2 { font-size: 30px; margin: 0 0 8px; letter-spacing: -.01em; }
 section p.sub { color: var(--muted); margin: 0 0 30px; max-width: 780px; }
@@ -94,7 +97,10 @@ footer { padding: 34px 0 50px; border-top: 1px solid var(--line); color: var(--m
 @media (max-width: 820px) {
   .feature, .feature.flip { grid-template-columns: 1fr; gap: 18px; }
   .feature.flip .text { order: 0; }
-  nav .links { display: none; }
+  nav .wrap { flex-wrap: wrap; height: auto; gap: 4px 22px; padding-top: 10px; }
+  nav .links { margin-left: 0; width: 100%; flex-wrap: nowrap; overflow-x: auto; gap: 16px;
+    padding-bottom: 8px; scrollbar-width: none; }
+  nav .links a { white-space: nowrap; }
   .hide-sm { display: none; }
 }
 </style>
@@ -105,7 +111,8 @@ footer { padding: 34px 0 50px; border-top: 1px solid var(--line); color: var(--m
   <a class="brand" href="#">G510s for Linux</a>
   <div class="links">
     <a href="#features">Features</a><a href="#screens">LCD screens</a><a href="#robust">What happens when</a>
-    <a href="#tested">Tested</a><a href="#install">Install</a><a href="#how">How it works</a><a href="#faq">FAQ</a>
+    <a href="#tested">Tested</a><a href="#install">Install</a><a href="#how">How it works</a><a href="#safety">Safety</a>
+    <a href="#troubleshooting">Troubleshooting</a><a href="#faq">FAQ</a>
     <a href="https://github.com/grumpybollocks/Logitech-G510s-LCD-control">GitHub</a>
   </div>
 </div></nav>
@@ -113,7 +120,7 @@ footer { padding: 34px 0 50px; border-top: 1px solid var(--line); color: var(--m
 <header class="hero"><div class="wrap">
   <h1>Your <span>Logitech G510s</span>,<br>fully working on Linux</h1>
   <p class="lead">The LCD screen, RGB backlight and G-key macros of the Logitech G510 / G510s. Live stats, your own
-    custom screens, a little audio visualizer and macros, from one app and three small background services.</p>
+    custom screens, a little audio visualizer and macros, from one app and a few small background services.</p>
   <div class="badges">
     <span class="badge"><b>Linux</b> · Arch &amp; Ubuntu tested</span>
     <span class="badge"><b>G510</b> / <b>G510s</b>, with or without headset</span>
@@ -139,7 +146,7 @@ footer { padding: 34px 0 50px; border-top: 1px solid var(--line); color: var(--m
     <div class="card"><div class="ic">🖥️</div><h3>The LCD, alive</h3><p>Stats, a clock and four screens of your own on the 160×43 display.</p></div>
     <div class="card"><div class="ic">🌈</div><h3>Backlight</h3><p>Pick a colour; it comes back at every login and every replug.</p></div>
     <div class="card"><div class="ic">⌨️</div><h3>G-keys</h3><p>18 G-keys × 3 profiles of recorded keystrokes or shell commands.</p></div>
-    <div class="card"><div class="ic">👤</div><h3>Runs as you</h3><p>The app and the three background services run as your normal user. <code>sudo</code> is only needed to install.</p></div>
+    <div class="card"><div class="ic">👤</div><h3>Runs as you</h3><p>The app and its background services run as your normal user. <code>sudo</code> is only needed to install.</p></div>
   </div>
 </div></section>
 
@@ -203,6 +210,7 @@ footer { padding: 34px 0 50px; border-top: 1px solid var(--line); color: var(--m
       <ul>
         <li>Colour from presets or a hex code: <b>Apply</b> now, or <b>Set as Default</b> for boot</li>
         <li>Restored at every login and on every replug</li>
+        <li>Brightness is always full: the keyboard ignores other values</li>
         <li>Click a G-key to record a macro: keystrokes, or a shell command</li>
         <li>M1 / M2 / M3 switch between three profiles of 18 macros, on the keyboard itself too</li>
         <li><b>Save All Settings Now</b> re-saves everything and reads it back from disk to prove it's there</li>
@@ -301,11 +309,19 @@ cd Logitech-G510s-LCD-control</pre>
     <code>ydotool</code> (1.0.4), the installer builds them into <code>/usr/local</code> from checksum-pinned releases. It also remaps the
     keyboard's Stop media key to Play/Pause (see the README to undo). Full list:
     <a href="https://github.com/grumpybollocks/Logitech-G510s-LCD-control#install">README → Install</a>.</p>
+
+  <h3 id="uninstall" style="margin-top:34px">Uninstall</h3>
+  <p class="sub">From the checkout, as your normal user. It lists what it will remove and asks first: the user services
+    (and <code>ydotool</code>'s), the udev rule, the Stop-key remap, <code>/usr/local/lib/g510-lcd</code> and the desktop shortcuts.</p>
+  <pre>./uninstall.sh          <span class="c"># --deps: also what it built into /usr/local · --purge: also your settings</span></pre>
+  <p class="sub" style="margin-top:14px">Distro and AUR packages are never removed. You stay in the <code>input</code> group, since other programs may
+    need it; to leave it: <code>sudo gpasswd -d "$USER" input</code>, then log out and back in.</p>
 </div></section>
 
 <section id="how"><div class="wrap">
   <h2>How it works</h2>
-  <p class="sub">Three small programs run as <code>systemd --user</code> services; the app is the editor.</p>
+  <p class="sub">Three small programs run as <code>systemd --user</code> services; the app is the editor. The installer also
+    enables a one-shot that restores your backlight colour at login, and <code>ydotool</code>'s service for macro replay.</p>
   <div class="flow">
     <div class="box"><b>g510-lcd-stats</b><span>C. Draws every LCD screen and sends it to <code>/dev/g510-lcd</code> (hidraw).</span></div>
     <div class="box"><b>g510-lcd-buttons</b><span>C. Listens to L1–L5 on <code>/dev/g510-keys</code> and switches screens.</span></div>
@@ -314,6 +330,36 @@ cd Logitech-G510s-LCD-control</pre>
     <div class="box"><b>udev</b><span>Stable <code>/dev/g510-lcd</code> and <code>/dev/g510-keys</code> links, whatever device numbers this boot gives.</span></div>
   </div>
   <p class="sub" style="margin-top:26px">Your settings (custom screens, images, macros, boot colour) live in <code>~/.local/share/g510-lcd</code>, not in the checkout.</p>
+</div></section>
+
+<section id="safety"><div class="wrap">
+  <h2>Safety &amp; privacy</h2>
+  <p class="sub">What the install changes, in plain words.</p>
+  <div class="grid">
+    <div class="card"><div class="ic">🔑</div><h3>The <code>input</code> group</h3><p>The LCD, G-keys, backlight and macro replay need it, so the installer adds you. It also lets any program you run read every keyboard and send keystrokes.</p></div>
+    <div class="card"><div class="ic">⌨️</div><h3>Macros can run commands</h3><p>A G-key set to a shell command runs it as you on every press. Macros live in <code>~/.local/share/g510-lcd/macros.json</code>.</p></div>
+    <div class="card"><div class="ic">🛡️</div><h3>What runs as root</h3><p>Only the installer's <code>sudo</code> steps and udev, which makes the LED files writable and restores your colour: it reads your colour file as you, accepts only numbers 0–255 and never runs it.</p></div>
+    <div class="card"><div class="ic">🎧</div><h3>Audio, no network</h3><p>The visualizer records what your speakers play only while it's on the LCD, into RAM, analysed locally. Nothing uses the network.</p></div>
+  </div>
+</div></section>
+
+<section id="troubleshooting"><div class="wrap">
+  <h2>Troubleshooting</h2>
+  <div class="tbl"><table>
+    <tr><th>Symptom</th><th>Try</th></tr>
+    <tr><td>"Permission denied", or nothing works right after installing</td><td>Log out and back in (or reboot): the new <code>input</code> group only applies to new logins. <code>id -nG</code> should list <code>input</code></td></tr>
+    <tr><td>LCD blank</td><td>Replug the keyboard, then <code>systemctl --user status g510-lcd-stats g510-lcd-buttons g510-macro-daemon</code></td></tr>
+    <tr><td>G-key macros don't replay (M1–M3 still switch)</td><td><code>ydotool</code> isn't running: <code>systemctl --user enable --now ydotool</code> (<code>unmask</code> it first if it's masked)</td></tr>
+    <tr><td>No visualizer bars</td><td>Bars only move while something plays. Needs <code>parec</code> (<code>libpulse</code> on Arch, <code>pulseaudio-utils</code> on Debian/Ubuntu) and <code>pipewire-pulse</code> running</td></tr>
+    <tr><td>Media keys act oddly in Brave (KDE)</td><td>Turn off the media-control feature of Brave's <i>Plasma Integration</i> extension: both register the same tab as a player</td></tr>
+  </table></div>
+  <p class="sub" style="margin-top:22px">Logs: the <b>G510 LCD - View Logs</b> shortcut follows them live, or run
+    <code>journalctl --user -u g510-lcd-stats -u g510-lcd-buttons -u g510-macro-daemon -f</code>.</p>
+  <h3 id="bugs">Reporting bugs</h3>
+  <p class="sub"><a href="https://github.com/grumpybollocks/Logitech-G510s-LCD-control/issues/new?template=bug_report.md">Open an issue</a> with your distro and version,
+    <code>uname -r</code>, how you installed, the output of <code>src/g510_lcd_stats --sensors</code> (run from the checkout),
+    <code>journalctl --user -u g510-lcd-stats -u g510-lcd-buttons -u g510-macro-daemon -b --no-pager | tail -n 100</code>
+    and <code>lsusb | grep 046d</code>. Glance over it for anything private first.</p>
 </div></section>
 
 <section id="faq"><div class="wrap">

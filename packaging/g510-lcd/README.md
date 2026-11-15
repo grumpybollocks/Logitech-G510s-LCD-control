@@ -4,8 +4,8 @@ A real Arch/pacman PKGBUILD for the G510s app, alongside the existing
 `install.sh` git-clone install method (both are valid; this one
 follows the "package installs everything to fixed `/usr/...`
 locations, no per-user path discovery needed" pattern -- see
-`PORTABILITY.md`), mirroring `packaging/g910-control/` on the G910
-side, built the same night for direct comparison.
+`READY_FOR_ANYONE.md`). The G910 app and its packaging now live in
+their own repo, grumpybollocks/g910-control.
 
 ## Status
 
@@ -14,39 +14,40 @@ by the user directly after this session's own permission system
 blocked doing it automatically), and both gaps originally left open
 below are now closed with real fixes, not workarounds. **Not
 submitted to the AUR** -- that's still deliberately not done (see
-"Before real AUR submission" below). **G510s as a whole is still work
-in progress** -- this packaging pass being solid doesn't mean the app
-itself is "finished"; Custom Screens is still explicitly WIP, and
-nothing here changes the project's own standing rule that nothing
-gets tagged or called fully done until physically confirmed end to
-end on the real keyboard.
+"Before real AUR submission" below), and **no release tag exists
+yet**, so the `source=` URL doesn't resolve: build from a checkout with
+the `git archive` line in the PKGBUILD's comment. The project's rule
+stands: nothing gets tagged until it's confirmed end to end on the
+real keyboard.
 
 ## Dependencies
 
 `depends=('python' 'python-pyqt5' 'python-pillow' 'python-evdev'
-'ydotool' 'freetype2' 'libg15render')`. Cross-checked against actual
-source, not copied from install.sh's list unexamined -- `yad` is in
-install.sh's pacman line but a real grep of every `.py`/`.c` file
-found zero uses of it anywhere in current code (leftover from the
-retired yad-based backlight script, see `BRANCHES.md`'s
-`legacy-yad-backlight-script` entry); correctly left out here.
-`python-pillow` is real and required (`png-to-lcd.py`'s Floyd-Steinberg
-dithering for the Custom Screens image-import feature).
+'ydotool' 'freetype2' 'playerctl' 'libpulse' 'libg15' 'libg15render')`
+-- the same set install.sh installs on Arch: `playerctl` for song
+title/artist/time, `libpulse` for `parec` (the visualizer), and
+`python-pillow` for `png-to-lcd.py`'s dithering in the Custom Screens
+image import.
 
-## Layout -- deliberately NOT flat, unlike g910-control
+## Layout -- deliberately NOT flat
 
-`packaging/g910-control`'s PKGBUILD installs its `.py` files flat
-under `/usr/lib/g910-control/` (no `src/` subdirectory). This package
+The G910 package installs its `.py` files flat under
+`/usr/lib/g910-control/` (no `src/` subdirectory). This package
 keeps the `src/` subdirectory:
 
 - `/usr/bin/g510-lcd` -- thin wrapper, `exec`s the real script
 - `/usr/lib/g510-lcd/src/*.py`, `*.c`-compiled binaries -- same shape
   as the git-clone checkout, not flattened
 - `/usr/lib/systemd/user/g510-lcd-stats.service`,
-  `g510-lcd-buttons.service`, `g510-macro-daemon.service`
+  `g510-lcd-buttons.service`, `g510-macro-daemon.service` (opt-in per
+  user; `g510-lcd.install` prints the `enable` line) and
+  `g510-backlight-restore.service` (enabled for every user)
 - `/usr/lib/udev/rules.d/99-g510-lcd.rules` -- installed byte-identical
   to the checked-in source, nothing stripped (see the resolved gap
   below for why that's now possible)
+- `/usr/lib/udev/hwdb.d/91-g510-stop-to-playpause.hwdb` -- the Stop ->
+  Play/Pause remap, as install.sh does
+- `/usr/lib/g510-lcd/fonts/*.fnt` -- the converted label fonts
 - `/usr/lib/g510-lcd/restore-backlight.sh` -- the udev-triggered
   backlight-restore wrapper (see below)
 - `/usr/share/applications/g510-lcd.desktop`
@@ -163,8 +164,9 @@ of this pass.
    version), and its `MainPID` was unchanged before and after the
    install -- the packaged service files, udev rule, and everything
    else installed alongside without disrupting anything live, exactly
-   as designed. This package has no `.install` hook (`pacman -Qi
-   g510-lcd` shows `Install Script: No`), so `pacman -U` never touched
+   as designed. The package had no `.install` hook then (`pacman -Qi
+   g510-lcd` showed `Install Script: No`; `g510-lcd.install`, which only
+   prints the group/enable steps, came later), so `pacman -U` never touched
    systemd enablement at all -- the packaged services were neither
    started nor enabled by the install itself, and actually starting
    them (which would require temporarily removing the `~/.config`
@@ -187,14 +189,13 @@ of this pass.
   testing.
 - **`namcap`** -- not installed on this machine, lint step skipped
   entirely rather than assumed clean.
-- **`sha256sums=SKIP`** -- same private-repo/no-public-tag situation
-  documented in `G510_PLAN_A.md`'s Phase 4 section. Must become a real
-  sum before any AUR submission.
+- **`sha256sums=SKIP`** -- there's no release tag to pin yet. Must
+  become a real sum before any AUR submission.
 
 ## Before real AUR submission (not done, needs the user's go-ahead)
 
 - Reinstall with the font/backlight fixes and do the true end-to-end
   service run above.
-- Make the source repo public, compute a real `sha256sum`.
+- Cut the release tag, compute a real `sha256sum`.
 - Generate `.SRCINFO` (`makepkg --printsrcinfo > .SRCINFO`).
 - Push to a dedicated `aur.archlinux.org` git remote.

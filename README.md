@@ -25,8 +25,7 @@ directly.
 It writes the LCD through a `hidraw` device the kernel's own
 `hid-lg-g15` driver already owns, instead of detaching the keyboard's
 extra-keys interface the way g15daemon does. So media and volume keys
-keep working exactly as before while the LCD runs (details in
-[`G510_README.md`](G510_README.md#why-this-doesnt-use-g15daemon--libg15s-own-device-code)).
+keep working exactly as before while the LCD runs.
 
 ## Features
 
@@ -36,11 +35,11 @@ keep working exactly as before while the LCD runs (details in
 | 🧩 **Custom screens (L2–L5)** | Drag sensors, images, text and a visualizer onto four screens of your own, in a live editor that shows exactly what the LCD will |
 | 🎵 **A little Winamp on your keyboard** | Equalizer bars for whatever's playing, plus the song title, artist and elapsed time |
 | 🌡️ **Sensors found by driver name** | AMD, Intel, NVIDIA, VIA, ARM CPUs; AMD, NVIDIA and Intel Arc GPUs; most motherboard sensor chips. Anything missing shows `N/A` |
-| 🌈 **RGB backlight** | Colour presets or a hex code, Apply or Set as Default; restored at every login and every replug |
+| 🌈 **RGB backlight** | Colour presets or a hex code, Apply or Set as Default; restored at every login and every replug. Brightness is always full: the keyboard ignores other values |
 | ⌨️ **G-key macros** | G1–G18 on three profiles (M1/M2/M3): recorded keystrokes or shell commands, replayed through `ydotool` |
 | 🔌 **Survives unplugging** | The keyboard drops off USB whenever its headset jack is plugged or unplugged; everything reconnects on its own |
 | 🪶 **Light on the system** | Audio capture and song lookups run only while a screen that shows them is on the LCD |
-| 👤 **Runs as your normal user** | The app and three small `systemd --user` services that start at login. `sudo` is only needed to install |
+| 👤 **Runs as your normal user** | The app, plus `systemd --user` services that start at login: three small programs, a one-shot backlight restore and `ydotool` for macros. `sudo` is only needed to install |
 | 🌀 **Optional fan sensors** | Any program that writes `/run/fanpilot/sensors.tsv` (such as the separate FanPilot fan-control app) adds its sensors, fan RPM and duty to the editor |
 
 ## Screenshots
@@ -152,8 +151,43 @@ get a desktop notification or a small Qt window instead.
 links, backlight access for the `input` group) and a hwdb remap,
 `udev/91-g510-stop-to-playpause.hwdb`, that makes the keyboard's
 **Stop** media key send **Play/Pause**. To get the real Stop key back,
-delete `/etc/udev/hwdb.d/91-g510-stop-to-playpause.hwdb` and run
-`sudo systemd-hwdb update`.
+delete `/etc/udev/hwdb.d/91-g510-stop-to-playpause.hwdb`, run
+`sudo systemd-hwdb update` and replug the keyboard.
+
+**User services it sets up:** `g510-lcd-stats`, `g510-lcd-buttons`,
+`g510-macro-daemon` (the three programs below) and
+`g510-backlight-restore` (a one-shot that restores your colour at
+login), all in `~/.config/systemd/user`. It also enables `ydotool`'s
+user service, writing its own copy there only if the distro's is
+missing or too old.
+
+## Uninstall
+
+```
+./uninstall.sh
+```
+
+Run it from the checkout as your normal user; it lists what it will
+remove and asks first (`--yes` skips the question). It stops and disables the user services above
+(and `ydotool`), deletes their unit files, the udev rule, the hwdb
+remap (the Stop key comes back after a replug),
+`/usr/local/lib/g510-lcd` and the five desktop shortcuts.
+
+It keeps, unless you ask:
+
+- **`--deps`** also removes what the installer *built* into `/usr/local`
+  (`libg15`/`libg15render` 1.3.1, `ydotool` 1.0.4, the `/dev/uinput`
+  rule and loader config that came with them). Off by default because
+  other programs may use them; they never replaced distro files.
+  Distro and AUR packages are never removed — use your package manager.
+- **`--purge`** also deletes your settings in `~/.local/share/g510-lcd`
+  (custom screens, images, macros, colour).
+- Your **`input` group** membership: other programs may need it, so it
+  prints the command instead — `sudo gpasswd -d "$USER" input`, then
+  log out and back in.
+
+The checkout folder itself is left for you to delete. Installed with
+the PKGBUILD instead? Use `sudo pacman -R g510-lcd`.
 
 ## What happens when…
 
@@ -201,7 +235,7 @@ src/g510_lcd_stats --sensors
 | GPU hotspot temp | AMD (`amdgpu`) | N/A |
 | GPU VRAM temp | AMD (`amdgpu`), Intel Arc (`xe`) | N/A |
 | GPU load, VRAM used | AMD (`amdgpu`), NVIDIA proprietary driver | N/A |
-| Motherboard temps (`MB_TEMP1`–`8`) | Gigabyte (`gigabyte_wmi`), ASUS (`asus_wmi_sensors`, `asus-ec-sensors`, older boards `atk0110`), most other boards via their Nuvoton `nct67xx`/`nct66xx`, ITE `it87xx`, Winbond or Fintek (`f71xxx`/`f8xxx`) chip, SMSC/Fujitsu (`sch5627`, `sch5636`); Dell (`dell_smm`), ThinkPad, HP (`hp_wmi_sensors`) | N/A |
+| Motherboard temps (`MB_TEMP1`–`6`) | Gigabyte (`gigabyte_wmi`), ASUS (`asus_wmi_sensors`, `asus-ec-sensors`, older boards `atk0110`), most other boards via their Nuvoton `nct67xx`/`nct66xx`, ITE `it87xx`, Winbond or Fintek (`f71xxx`/`f8xxx`) chip, SMSC/Fujitsu (`sch5627`, `sch5636`); Dell (`dell_smm`), ThinkPad, HP (`hp_wmi_sensors`) | N/A |
 | CPU load/clock, RAM, swap, disk, network, uptime, media | every Linux PC | — |
 
 - **Two graphics cards** (e.g. a Ryzen APU plus a real card): the one
@@ -292,7 +326,9 @@ flowchart LR
     A -- "colour" --> L["/sys/class/leds/g15::kbd_backlight"]
 ```
 
-Three small programs run as systemd `--user` services:
+Three small programs run as systemd `--user` services (the installer
+also enables `g510-backlight-restore`, a one-shot at login, and
+`ydotool` for macro replay):
 
 | Service | Does |
 | --- | --- |
@@ -316,6 +352,68 @@ colour) live in `~/.local/share/g510-lcd`, not in the checkout.
 Run the tests with `tests/run-tests.sh` — nothing in them touches your
 keyboard or your saved settings.
 
+## Safety & privacy
+
+- **The `input` group.** The LCD, the G-keys, the backlight LEDs and
+  `/dev/uinput` (macro replay) all belong to it, so the installer adds
+  you. It also lets *any* program you run read every keyboard and send
+  keystrokes. Leave it with `sudo gpasswd -d "$USER" input`.
+- **Macros can run shell commands.** A G-key set to a command runs it
+  through your shell, as you, every time you press it. Macros live in
+  `~/.local/share/g510-lcd/macros.json`; anything that can write that
+  file can change what a G-key runs.
+- **What runs as root:** only the installer's `sudo` steps and udev.
+  When the keyboard appears, udev (as root) makes the LED files
+  writable by `input` and runs
+  `/usr/local/lib/g510-lcd/restore-backlight.sh` (`/usr/lib/g510-lcd/` for
+  the PKGBUILD), which reads your
+  saved colour *as you* (at most 4 KB, 5 s), accepts only numbers
+  0–255 and never executes the file. The app and every service run as
+  your user.
+- **Audio and network.** The visualizer records what your speakers
+  play (`parec`) only while a visualizer screen is on the LCD, into a
+  file under `$XDG_RUNTIME_DIR` (RAM), analysed locally. Nothing in
+  the app or the services uses the network.
+
+## Troubleshooting
+
+| Symptom | Try |
+| --- | --- |
+| "Permission denied", or nothing works right after installing | Log out and back in (or reboot) once: the new `input` group only applies to new logins. `id -nG` should list `input` |
+| LCD blank | Unplug and replug the keyboard, then `systemctl --user status g510-lcd-stats g510-lcd-buttons g510-macro-daemon`. `/dev/g510-lcd` and `/dev/g510-keys` should exist |
+| G-key macros don't replay (M1–M3 still switch) | `ydotool` isn't running: `systemctl --user status ydotool`, then `systemctl --user enable --now ydotool` (`unmask` it first if it says masked). Then check the logs below |
+| No visualizer bars | Bars only move while something is playing. It needs `parec` (`libpulse` on Arch, `pulseaudio-utils` on Debian/Ubuntu) and a PulseAudio-compatible server: `systemctl --user status pipewire-pulse` |
+| Media keys act oddly in Brave (KDE) | Brave and its *Plasma Integration* extension both register the tab as a media player; turn off the extension's media-control feature (the installer reminds you of this at the end) |
+| The Stop key plays/pauses | That's the hwdb remap; see *System files* under [Install](#install) to undo it |
+
+**Logs:** the *G510 LCD - View Logs* shortcut follows them live; it
+runs
+
+```
+journalctl --user -u g510-lcd-stats -u g510-lcd-buttons -u g510-macro-daemon -f
+```
+
+L-button presses are also logged to `~/.local/share/g510lcd-buttons.log`,
+and the login-time colour restore to
+`journalctl --user -u g510-backlight-restore`.
+
+## Reporting bugs
+
+[Open an issue](https://github.com/grumpybollocks/Logitech-G510s-LCD-control/issues/new?template=bug_report.md)
+with:
+
+- your distro and version, and the kernel: `uname -r`
+- how you installed (`./install.sh`, or the PKGBUILD) and, if the
+  install failed, its output
+- `src/g510_lcd_stats --sensors`, run from the checkout (the PKGBUILD
+  install: `/usr/lib/g510-lcd/src/g510_lcd_stats --sensors`)
+- `journalctl --user -u g510-lcd-stats -u g510-lcd-buttons -u g510-macro-daemon -b --no-pager | tail -n 100`
+- `lsusb | grep 046d` (with or without the headset plugged in, as when
+  it happened)
+
+Glance over the output for anything private before posting. Patches
+welcome: see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
 ## Status
 
 - Public, MIT-licensed, in daily use on the developer's own G510s.
@@ -326,13 +424,14 @@ keyboard or your saved settings.
 ## Docs
 
 - [`docs/index.html`](docs/index.html) — the project's landing page.
-- [`G510_README.md`](G510_README.md) — the full story: protocol
-  details, every bug hit and fixed, fonts, udev rules.
 - [`G510_CUSTOM_SCREENS_HOWTO.md`](G510_CUSTOM_SCREENS_HOWTO.md) — how
   to use the Custom Screens editor.
-- [`READY_FOR_ANYONE.md`](READY_FOR_ANYONE.md) — why nothing in the
-  install is tied to one machine or one checkout path.
-- [`BRANCHES.md`](BRANCHES.md) — branch history.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — running the tests, sending changes.
+
+**Developer notes** (working logs written during development, not user
+docs): [`G510_README.md`](G510_README.md) (protocol details, every bug
+hit and fixed), [`READY_FOR_ANYONE.md`](READY_FOR_ANYONE.md),
+[`BRANCHES.md`](BRANCHES.md).
 
 **Looking for the G910?** That app moved to its own repo:
 [grumpybollocks/g910-control](https://github.com/grumpybollocks/g910-control).
