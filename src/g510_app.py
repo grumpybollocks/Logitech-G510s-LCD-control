@@ -59,6 +59,20 @@ LED_DIR = Path("/sys/class/leds/g15::kbd_backlight")
 # deliberately deferred gap, documented in packaging/g510-lcd/README.md.
 # (DEFAULTS_SCRIPT_DATA_DIR is set further down, once DATA_DIR exists.)
 MAIN_KEYBOARD_DEVICE = "/dev/input/by-id/usb-Logitech_G510s_Gaming_Keyboard-event-kbd"
+MAIN_KEYBOARD_GLOB = "usb-Logitech_G510*_Gaming_Keyboard-event-kbd"
+
+
+def main_keyboard_device():
+    """(2026-11-15) The by-id name comes from the USB product string, which
+    differs on the original G510 -- only the G510s name used to be tried,
+    so recording never worked there. Exact G510s name first, then any
+    G510 variant; resolved at record time (the keyboard re-enumerates)."""
+    if os.path.exists(MAIN_KEYBOARD_DEVICE):
+        return MAIN_KEYBOARD_DEVICE
+    matches = sorted(Path(MAIN_KEYBOARD_DEVICE).parent.glob(MAIN_KEYBOARD_GLOB))
+    return str(matches[0]) if matches else MAIN_KEYBOARD_DEVICE
+
+
 STATS_BINARY = PROJECT_DIR / "src" / "g510_lcd_stats"
 
 # Your own macros/custom-screens config and imported images live under
@@ -481,9 +495,27 @@ class RecorderThread(QThread):
         import evdev
         from evdev import ecodes
         try:
-            dev = evdev.InputDevice(MAIN_KEYBOARD_DEVICE)
+            dev = evdev.InputDevice(main_keyboard_device())
+        except OSError:
+            self.finished_recording.emit("", False)
+            return
+        # (2026-11-15) Grabbing while a key is still held (e.g. the Enter that
+        # started recording) swallows its release -- the key then stays stuck
+        # down for the rest of the desktop. Wait (bounded, 2 s) for every key
+        # to be up first.
+        deadline = time.monotonic() + 2.0
+        try:
+            while dev.active_keys() and time.monotonic() < deadline and not self._stop:
+                time.sleep(0.02)
+        except OSError:
+            pass
+        try:
             dev.grab()
         except OSError:
+            try:
+                dev.close()
+            except OSError:
+                pass
             self.finished_recording.emit("", False)
             return
         ok = True
@@ -570,6 +602,15 @@ class MacroRecordDialog(QDialog):
         cmd_row.addWidget(self.command_edit)
         cmd_row.addWidget(save_cmd_btn)
         layout.addLayout(cmd_row)
+
+        # (2026-11-15) No default button: QDialog made Record the auto-default,
+        # so Enter (even in the command field) started a recording -- which
+        # grabs the keyboard mid key-press. Enter in the command field now
+        # saves the command instead.
+        for btn in (self.record_btn, self.save_btn, clear_btn, cancel_btn, save_cmd_btn):
+            btn.setAutoDefault(False)
+            btn.setDefault(False)
+        self.command_edit.returnPressed.connect(self.on_save_command)
 
         self.setLayout(layout)
 
@@ -2299,6 +2340,10 @@ class CustomScreensTab(QWidget):
         # re-importing the same file twice (or two different files with
         # the same name) doesn't silently clobber an existing one.
         stem = "".join(c if c.isalnum() else "_" for c in Path(src_path).stem) or "image"
+        # (2026-11-15) Capped at 60 bytes, cut on a UTF-8 boundary: the C
+        # side keeps the relative path in a fixed buffer, and a long
+        # (often non-Latin, multi-byte) name used to be silently never drawn.
+        stem = stem.encode("utf-8")[:60].decode("utf-8", "ignore") or "image"
         out_path = CUSTOM_SCREEN_IMAGES_DIR / f"{stem}.bin"
         n = 1
         while out_path.exists():
@@ -2530,12 +2575,13 @@ class CustomScreensTab(QWidget):
         # piling up overlapping subprocesses; _start_image_resize_worker
         # picks that up the moment the current one finishes.
         if self._image_resize_worker is not None and self._image_resize_worker.isRunning():
-            self._image_resize_next = (index, target_w, target_h)
+            self._image_resize_next = (index, target_w, target_h, self.current_screen)
             return
         self._start_image_resize_worker(index, target_w, target_h)
 
-    def _start_image_resize_worker(self, index, target_w, target_h):
-        elements = self.config.get(self.current_screen, [])
+    def _start_image_resize_worker(self, index, target_w, target_h, screen=None):
+        screen = screen or self.current_screen
+        elements = self.config.get(screen, [])
         if index >= len(elements):
             return
         el = elements[index]
@@ -2544,7 +2590,7 @@ class CustomScreensTab(QWidget):
         src_full = DATA_DIR / el["src"]
         out_full = DATA_DIR / el["path"]
         png_to_lcd = PROJECT_DIR / "src" / "png-to-lcd.py"
-        self._image_resize_screen = self.current_screen
+        self._image_resize_screen = screen
         # Real bug found by self-audit: an index alone isn't a stable
         # identity across an async gap. Removing (or reordering) an
         # earlier element while this worker is still running would
@@ -2578,16 +2624,22 @@ class CustomScreensTab(QWidget):
         self._image_resize_worker.wait()
         self._image_resize_worker = None
         self._image_resize_el = None
-        if ok and started_on == self.current_screen:
-            elements = self.config.get(self.current_screen, [])
+        # (2026-11-15) Applied to the screen the resize STARTED on, even if
+        # the tab changed meanwhile: the .bin on disk was already rewritten
+        # at the new size, so dropping the new width/height left a config
+        # that no longer matched the file -- C rejects that and the image
+        # vanished. The identity check still guards against a wrong element.
+        if ok and started_on is not None:
+            elements = self.config.get(started_on, [])
             if index < len(elements) and elements[index] is el_token:
                 elements[index]["width"], elements[index]["height"] = w, h
                 save_custom_screens(self.config)
-                self.refresh_preview()
+                if started_on == self.current_screen:
+                    self.refresh_preview()
         if self._image_resize_next is not None:
-            next_index, next_w, next_h = self._image_resize_next
+            next_index, next_w, next_h, next_screen = self._image_resize_next
             self._image_resize_next = None
-            self._start_image_resize_worker(next_index, next_w, next_h)
+            self._start_image_resize_worker(next_index, next_w, next_h, next_screen)
 
     def on_drag_started(self):
         # Pause the 1s idle timer while the 120ms drag timer takes
