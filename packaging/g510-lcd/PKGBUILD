@@ -8,14 +8,13 @@ url="https://github.com/grumpybollocks/Logitech-G510s-LCD-control"
 license=('MIT')
 depends=('python' 'python-pyqt5' 'python-pillow' 'python-evdev' 'ydotool' 'freetype2' 'playerctl' 'libpulse' 'libg15' 'libg15render')
 makedepends=('pkgconf')
-# The source repo is private while the app is being finished, and this
-# exact tag doesn't exist yet either -- v1.1 is built but deliberately
-# not tagged until physically confirmed on the real keyboard (see
-# G510_README.md's own stated rule). This source= line is what a real
-# release would point at once both of those are true; local testing
-# tonight instead used a tarball built from `git archive` of the
-# current g510s-dev branch HEAD, documented in README.md alongside
-# everything else actually verified this pass.
+# No release tag exists yet: g510s-v1.1 is where the first one will be cut
+# (the repo is public). Until then this URL 404s; build from a checkout
+# instead, by putting a tarball of the same name next to this PKGBUILD
+# (makepkg uses a local file and skips the download):
+#   git archive --prefix=Logitech-G510s-LCD-control-g510s-v1.1/ \
+#       -o packaging/g510-lcd/g510-lcd-1.1.tar.gz main
+#   cd packaging/g510-lcd && makepkg -si
 source=("$pkgname-$pkgver.tar.gz::https://github.com/grumpybollocks/Logitech-G510s-LCD-control/archive/refs/tags/g510s-v$pkgver.tar.gz")
 sha256sums=('SKIP')   # TODO when a release tag is cut: pin with updpkgsums (install.sh pins its downloads)
 install=g510-lcd.install

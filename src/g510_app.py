@@ -6,7 +6,8 @@ Architecture: one QTabWidget, one tab per feature. Adding a new feature
 = adding a new tab class + one line in MainWindow.__init__. Nothing in
 an existing tab needs to change when a new one is added.
 
-Phase 1: Backlight tab (color/brightness + service control).
+Phase 1: Backlight tab (colour + service control; brightness is fixed at
+         MAX_BRIGHTNESS, see below).
          G-Keys tab (record/assign macros to G1-G18 per M1/M2/M3 profile).
 Phase 2: Custom Screens tab (AIDA64-style sensor dashboard builder for
          the L2-L5 buttons, with a live preview of the real LCD output).
