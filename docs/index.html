@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Logitech G510s for Linux</title>
+<meta name="description" content="The LCD screen, RGB backlight and G-key macros of the Logitech G510 / G510s, properly working on Linux: live stats, custom screens, an audio visualizer and macros.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Logitech G510s for Linux">
+<meta property="og:description" content="The LCD screen, RGB backlight and G-key macros of the Logitech G510 / G510s, properly working on Linux: live stats, custom screens, an audio visualizer and macros.">
+<style>
+:root {
+  --bg: #f6f7f9; --bg2: #ffffff; --text: #1d2125; --muted: #5b6470; --line: #dde1e6;
+  --accent: #2f7fd1; --accent2: #6aa832; --good: #27ae60; --code: #eef1f4;
+  --lcd: #bed691; --bezel: #2b2f2a;
+  --shadow: 0 10px 30px rgba(20, 30, 40, .12);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141618; --bg2: #1d2023; --text: #eceff1; --muted: #a2abb5; --line: #30353a;
+    --accent: #5aa2ec; --code: #24282c; --bezel: #0d0f0c; --shadow: 0 10px 30px rgba(0, 0, 0, .45);
+  }
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.6 "Noto Sans", "Segoe UI", system-ui, -apple-system, sans-serif; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code { background: var(--code); border-radius: 5px; padding: 1px 5px; font: .9em ui-monospace, "JetBrains Mono", monospace; }
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px; }
+nav { position: sticky; top: 0; z-index: 10; background: var(--bg); border-bottom: 1px solid var(--line); }
+nav .wrap { display: flex; align-items: center; gap: 22px; height: 58px; }
+nav .brand { font-weight: 700; color: var(--text); }
+nav .links { margin-left: auto; display: flex; gap: 18px; flex-wrap: wrap; }
+nav .links a { color: var(--muted); font-size: 15px; }
+nav .links a:hover { color: var(--text); text-decoration: none; }
+header.hero { padding: 60px 0 36px; text-align: center; }
+.hero h1 { font-size: clamp(32px, 5vw, 52px); line-height: 1.1; margin: 8px 0 12px; letter-spacing: -.02em; }
+.hero h1 span { color: var(--accent); }
+.hero p.lead { font-size: 19px; color: var(--muted); max-width: 740px; margin: 0 auto 26px; }
+.badges { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-bottom: 26px; }
+.badge { font-size: 13px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--bg2); color: var(--muted); }
+.badge b { color: var(--text); }
+.cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.btn { display: inline-block; padding: 11px 20px; border-radius: 10px; font-weight: 600;
+  border: 1px solid var(--line); background: var(--bg2); color: var(--text); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn:hover { text-decoration: none; filter: brightness(1.06); }
+.shot { display: block; width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--line); box-shadow: var(--shadow); }
+.hero .shot { margin-top: 40px; }
+.lcd { display: block; background: var(--bezel); padding: 12px; border-radius: 12px; box-shadow: var(--shadow); margin: 0; }
+.lcd img { display: block; width: 100%; height: auto; image-rendering: pixelated; border-radius: 3px; }
+.lcd figcaption { color: #c9cfc4; font-size: 13px; text-align: center; margin-top: 8px; }
+.lcds { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 18px; }
+section { padding: 56px 0; border-top: 1px solid var(--line); }
+section h2 { font-size: 30px; margin: 0 0 8px; letter-spacing: -.01em; }
+section p.sub { color: var(--muted); margin: 0 0 30px; max-width: 780px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 16px; }
+.card { background: var(--bg2); border: 1px solid var(--line); border-radius: 12px; padding: 18px 18px 14px; }
+.card .ic { font-size: 24px; }
+.card h3 { margin: 6px 0 6px; font-size: 17px; }
+.card p { margin: 0; color: var(--muted); font-size: 15px; }
+.feature { display: grid; grid-template-columns: 1fr 1.25fr; gap: 36px; align-items: center; margin: 44px 0; }
+.feature.flip { grid-template-columns: 1.25fr 1fr; }
+.feature.flip .text { order: 2; }
+.feature h3 { font-size: 23px; margin: 0 0 8px; }
+.feature p, .feature li { color: var(--muted); }
+.feature ul { padding-left: 20px; margin: 10px 0 0; }
+.stack { display: grid; gap: 14px; }
+.tbl { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; background: var(--bg2); border: 1px solid var(--line);
+  border-radius: 12px; overflow: hidden; font-size: 15px; }
+th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { background: var(--code); font-weight: 600; }
+tr:last-child td { border-bottom: none; }
+td.ok { color: var(--good); font-weight: 600; }
+pre { background: var(--code); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px;
+  overflow-x: auto; font: 14px/1.55 "JetBrains Mono", "Fira Code", ui-monospace, monospace; margin: 0; }
+pre .c { color: var(--muted); }
+.steps { counter-reset: s; display: grid; gap: 14px; }
+.step { display: grid; grid-template-columns: 38px 1fr; gap: 14px; align-items: start; }
+.step::before { counter-increment: s; content: counter(s); width: 38px; height: 38px; border-radius: 50%;
+  background: var(--accent); color: #fff; font-weight: 700; display: grid; place-items: center; }
+.step > div { min-width: 0; }
+.step h4 { margin: 6px 0 6px; }
+.step p { margin: 0 0 8px; color: var(--muted); }
+.flow { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+.flow .box { background: var(--bg2); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+.flow .box b { display: block; margin-bottom: 4px; }
+.flow .box span { color: var(--muted); font-size: 14px; }
+details { background: var(--bg2); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; margin: 10px 0; }
+summary { cursor: pointer; font-weight: 600; }
+details p { color: var(--muted); margin: 10px 0 2px; }
+footer { padding: 34px 0 50px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; text-align: center; }
+@media (max-width: 820px) {
+  .feature, .feature.flip { grid-template-columns: 1fr; gap: 18px; }
+  .feature.flip .text { order: 0; }
+  nav .wrap { flex-wrap: wrap; height: auto; gap: 4px 22px; padding-top: 10px; }
+  nav .links { margin-left: 0; width: 100%; flex-wrap: nowrap; overflow-x: auto; gap: 16px;
+    padding-bottom: 8px; scrollbar-width: none; }
+  nav .links a { white-space: nowrap; }
+  .hide-sm { display: none; }
+}
+</style>
+</head>
+<body>
+
+<nav><div class="wrap">
+  <a class="brand" href="#">G510s for Linux</a>
+  <div class="links">
+    <a href="#features">Features</a><a href="#screens">LCD screens</a><a href="#robust">What happens when</a>
+    <a href="#tested">Tested</a><a href="#install">Install</a><a href="#how">How it works</a><a href="#safety">Safety</a>
+    <a href="#troubleshooting">Troubleshooting</a><a href="#faq">FAQ</a>
+    <a href="https://github.com/grumpybollocks/Logitech-G510s-LCD-control">GitHub</a>
+  </div>
+</div></nav>
+
+<header class="hero"><div class="wrap">
+  <h1>Your <span>Logitech G510s</span>,<br>fully working on Linux</h1>
+  <p class="lead">The LCD screen, RGB backlight and G-key macros of the Logitech G510 / G510s. Live stats, your own
+    custom screens, a little audio visualizer and macros, from one app and a few small background services.</p>
+  <div class="badges">
+    <span class="badge"><b>Linux</b> · Arch &amp; Ubuntu tested</span>
+    <span class="badge"><b>G510</b> / <b>G510s</b>, with or without headset</span>
+    <span class="badge"><b>C</b> + <b>Python 3</b></span>
+    <span class="badge"><b>194</b> automated checks passing</span>
+    <span class="badge"><b>MIT</b> licence</span>
+  </div>
+  <div class="cta">
+    <a class="btn primary" href="#install">Install</a>
+    <a class="btn" href="#features">See the features</a>
+    <a class="btn" href="https://github.com/grumpybollocks/Logitech-G510s-LCD-control">Source on GitHub</a>
+  </div>
+  <img class="shot" src="screenshots/g510s-control-v1.png" alt="G510s Control app: keyboard canvas with backlight colour, G-keys and a live mirror of the LCD" width="1235" height="589">
+</div></header>
+
+<section><div class="wrap">
+  <h2>Why it exists</h2>
+  <p class="sub">Logitech's own software is Windows-only and everything else out there is old, abandoned or
+    half-broken, so this talks to the keyboard directly. The LCD is written through a <code>hidraw</code> device
+    that the kernel's own <code>hid-lg-g15</code> driver keeps owning, instead of detaching the keyboard's extra-keys
+    interface the way g15daemon does, so media and volume keys keep working while the LCD runs.</p>
+  <div class="grid">
+    <div class="card"><div class="ic">🖥️</div><h3>The LCD, alive</h3><p>Stats, a clock and four screens of your own on the 160×43 display.</p></div>
+    <div class="card"><div class="ic">🌈</div><h3>Backlight</h3><p>Pick a colour; it comes back at every login and every replug.</p></div>
+    <div class="card"><div class="ic">⌨️</div><h3>G-keys</h3><p>18 G-keys × 3 profiles of recorded keystrokes or shell commands.</p></div>
+    <div class="card"><div class="ic">👤</div><h3>Runs as you</h3><p>The app and its background services run as your normal user. <code>sudo</code> is only needed to install.</p></div>
+  </div>
+</div></section>
+
+<section id="features"><div class="wrap">
+  <h2>Features</h2>
+  <p class="sub">One app for setting things up; small background services that keep running after you close it.</p>
+
+  <div class="feature">
+    <div class="text">
+      <h3>🧩 Custom screens, edited live</h3>
+      <p>L1 is built in. <b>L2–L5 are yours</b>: open the <b>Custom Screens</b> tab, pick a screen and drop things on it.</p>
+      <ul>
+        <li><b>Sensors</b> as a number or a bar, in different text sizes</li>
+        <li><b>Text</b> labels, <b>images</b> (converted for the 1-bit screen; flat logos work best) and a <b>visualizer</b></li>
+        <li>Drag to move; hover a bar's end or an image's corner to resize</li>
+        <li>Up to 8 sensors, 2 images, 4 text fields and 1 visualizer per screen</li>
+        <li>Every change saves itself instantly, no Save button needed</li>
+      </ul>
+      <p>The preview is drawn by the same program that drives the LCD, so it matches the real screen pixel for pixel.</p>
+    </div>
+    <img class="shot" src="screenshots/app-custom-screens.png" alt="The Custom Screens editor with a media and visualizer screen" loading="lazy" width="1244" height="807">
+  </div>
+
+  <div class="feature flip">
+    <div class="text">
+      <h3>🎵 A little Winamp on your keyboard</h3>
+      <p>Drop a visualizer onto any of L2–L5 and the LCD becomes a tiny live equalizer next to the song title,
+        artist and a running <code>1:23/3:45</code>.</p>
+      <ul>
+        <li>Listens to whatever comes out of your speakers, like a real VU meter: Spotify, a YouTube tab, VLC or a game, nothing to configure</li>
+        <li>Make it bigger and it adds more bars rather than fatter ones</li>
+        <li>Long titles are cut to fit; title and artist stay centred</li>
+        <li>Only listens while a screen with a visualizer is on the LCD</li>
+      </ul>
+    </div>
+    <figure class="lcd"><img src="screenshots/lcd-visualizer.png" alt="LCD: artist, song title, elapsed time and visualizer bars" loading="lazy" width="640" height="172"></figure>
+  </div>
+
+  <div class="feature">
+    <div class="text">
+      <h3>📊 Live stats and a clock on L1</h3>
+      <p>Press <b>L1</b> to switch between the stats screen (CPU, temperature, VRAM, RAM) and a clock with the date and an
+        analog face. Sensors are found by driver name, so most PCs need no setup:</p>
+      <ul>
+        <li><b>CPU:</b> AMD, Intel, VIA, ARM / Raspberry Pi</li>
+        <li><b>GPU:</b> AMD, NVIDIA (proprietary driver via NVML, or nouveau), Intel Arc</li>
+        <li><b>Motherboard:</b> Gigabyte, ASUS, Dell, ThinkPad, HP and most Nuvoton, ITE, Winbond, Fintek and SMSC chips</li>
+        <li>Anything your PC doesn't have shows <code>N/A</code>. <code>src/g510_lcd_stats --sensors</code> shows what was found</li>
+      </ul>
+    </div>
+    <div class="stack">
+      <figure class="lcd"><img src="screenshots/lcd-stats.png" alt="LCD stats screen: CPU, temperature, VRAM, RAM" loading="lazy" width="640" height="172"></figure>
+      <figure class="lcd"><img src="screenshots/lcd-clock.png" alt="LCD clock screen: digital time, date and analog clock" loading="lazy" width="640" height="172"></figure>
+    </div>
+  </div>
+
+  <div class="feature flip">
+    <div class="text">
+      <h3>🌈 Backlight and ⌨️ G-key macros</h3>
+      <p>The <b>Backlight + G-Keys</b> tab shows the whole keyboard in your current colour, with a live mirror of the LCD.</p>
+      <ul>
+        <li>Colour from presets or a hex code: <b>Apply</b> now, or <b>Set as Default</b> for boot</li>
+        <li>Restored at every login and on every replug</li>
+        <li>Brightness is always full: the keyboard ignores other values</li>
+        <li>Click a G-key to record a macro: keystrokes, or a shell command</li>
+        <li>M1 / M2 / M3 switch between three profiles of 18 macros, on the keyboard itself too</li>
+        <li><b>Save All Settings Now</b> re-saves everything and reads it back from disk to prove it's there</li>
+      </ul>
+    </div>
+    <img class="shot" src="screenshots/g510s-control-v1.png" alt="Backlight and G-keys tab" loading="lazy" width="1235" height="589">
+  </div>
+
+  <div class="grid">
+    <div class="card"><div class="ic">🔌</div><h3>Headset jack? Fine.</h3><p>The keyboard drops off USB whenever its headset jack is plugged or unplugged. Everything reconnects on its own.</p></div>
+    <div class="card"><div class="ic">🪶</div><h3>Light on the system</h3><p>Audio capture and song lookups only run while a screen that shows them is on the LCD.</p></div>
+    <div class="card"><div class="ic">🖼️</div><h3>Images</h3><p>Import any picture: it's shrunk, converted to 1-bit and placed on the screen; transparent backgrounds work.</p></div>
+    <div class="card"><div class="ic">💾</div><h3>Second drive</h3><p>Free space on a second drive can be a sensor too; the app asks for its folder. No drive: <code>N/A</code>.</p></div>
+    <div class="card"><div class="ic">🌀</div><h3>Fan sensors (optional)</h3><p>Any program that writes <code>/run/fanpilot/sensors.tsv</code>, such as the separate FanPilot fan-control app, adds its temperatures, fan RPM and duty to the editor.</p></div>
+    <div class="card"><div class="ic">🧪</div><h3>Tested offscreen</h3><p><code>tests/run-tests.sh</code> never touches your keyboard or your saved settings.</p></div>
+  </div>
+</div></section>
+
+<section id="screens"><div class="wrap">
+  <h2>On the LCD</h2>
+  <p class="sub">Each image below was rendered by the real LCD program in its preview mode (<code>g510_lcd_stats --preview</code>,
+    the same drawing code that drives the keyboard) and is shown at 4× size. The custom screens are examples; yours are whatever you build.</p>
+  <div class="lcds">
+    <figure class="lcd"><img src="screenshots/lcd-stats.png" alt="Stats screen" loading="lazy" width="640" height="172"><figcaption>L1 · stats</figcaption></figure>
+    <figure class="lcd"><img src="screenshots/lcd-clock.png" alt="Clock screen" loading="lazy" width="640" height="172"><figcaption>L1 · clock</figcaption></figure>
+    <figure class="lcd"><img src="screenshots/lcd-custom-bars.png" alt="Custom screen with sensor bars" loading="lazy" width="640" height="172"><figcaption>Custom · sensors as bars</figcaption></figure>
+    <figure class="lcd"><img src="screenshots/lcd-visualizer.png" alt="Custom screen with media info and visualizer" loading="lazy" width="640" height="172"><figcaption>Custom · media + visualizer</figcaption></figure>
+    <figure class="lcd"><img src="screenshots/lcd-custom-text.png" alt="Custom screen with large text, time, date and uptime" loading="lazy" width="640" height="172"><figcaption>Custom · text, time, date, uptime</figcaption></figure>
+  </div>
+</div></section>
+
+<section id="robust"><div class="wrap">
+  <h2>What happens when…</h2>
+  <p class="sub">A keyboard that drops off USB every time you touch the headset jack needs software that doesn't mind.</p>
+  <div class="tbl"><table>
+    <tr><th>Situation</th><th>What happens</th></tr>
+    <tr><td>You plug or unplug the headset jack (or the keyboard)</td><td>The keyboard comes back as USB ID <code>046d:c22d</code> (no headset) or <code>046d:c22e</code> (headset); the udev rule matches both. The buttons listener and macro service reconnect in the same process (every 200 ms for 10 s, then every 3 s)</td></tr>
+    <tr><td>The LCD device is missing</td><td>Logged once when it disappears and once when it's back, not on every frame</td></tr>
+    <tr><td>You reboot or log in</td><td>The services start at login; the backlight colour is restored at login and on every replug</td></tr>
+    <tr><td>No visualizer or media element is on screen</td><td>No audio capture and no <code>playerctl</code> calls at all</td></tr>
+    <tr><td>A media player hangs</td><td>Song lookups give up after 2 s instead of freezing the LCD and the L-buttons</td></tr>
+    <tr><td>A song title is too long</td><td>Cut short with a <code>.</code> so it never runs off the screen</td></tr>
+    <tr><td>A sensor doesn't exist on your PC</td><td>That reading shows <code>N/A</code>; everything else keeps working</td></tr>
+    <tr><td>The bundled label font is missing or damaged</td><td>A second bundled font is used, then the LCD library's built-in font. The LCD always starts</td></tr>
+    <tr><td><code>macros.json</code> is damaged</td><td>Copied aside (<code>macros.json.broken-&lt;time&gt;</code>) before anything is saved, and the app tells you where</td></tr>
+    <tr><td>Something unexpected goes wrong in the app</td><td>The error is logged and shown once; the app keeps running</td></tr>
+    <tr><td>The root-run backlight script reads your colour file</td><td>It only parses brightness and RGB numbers (0–255), reads the file as you, and runs nothing from it</td></tr>
+    <tr><td>You re-run the installer</td><td>It only adds what's missing, and refuses to run as root</td></tr>
+  </table></div>
+</div></section>
+
+<section id="tested"><div class="wrap">
+  <h2>Tested</h2>
+  <p class="sub">Every change lands on <code>main</code> through a pull request. The numbers below come from the test suite and the merged pull requests.</p>
+  <div class="tbl"><table>
+    <tr><th>Check</th><th>Result</th><th class="hide-sm">Details</th></tr>
+    <tr><td>Automated tests</td><td class="ok">194 / 194 checks</td><td class="hide-sm">11 suites in <code>tests/run-tests.sh</code>: sensors, rendering, reconnect, backlight script, macros, the app's widgets offscreen</td></tr>
+    <tr><td>Daily use</td><td class="ok">Arch family</td><td class="hide-sm">on the developer's own G510s</td></tr>
+    <tr><td>Ubuntu 24.04</td><td class="ok">passed</td><td class="hide-sm">fresh VM each round: installer, all services active with 0 restarts, a real macro keystroke, after a reboot</td></tr>
+    <tr><td>Memory, overnight</td><td class="ok">flat at 5,532 KB</td><td class="hide-sm">9 h 18 m soak of the live LCD service, 0 restarts; <code>scripts/leak-check.sh</code> guards it</td></tr>
+    <tr><td>System impact</td><td class="ok">nothing extra</td><td class="hide-sm">on the stats screen: no audio capture process and no extra CPU from child processes</td></tr>
+    <tr><td>Sanitizers</td><td class="ok">0 reports</td><td class="hide-sm">ASan + UBSan on the C tests and every preview screen</td></tr>
+    <tr><td>Sensors</td><td class="ok">AMD on real hardware</td><td class="hide-sm">Intel, NVIDIA and the rest covered by tests against simulated sensor trees; reports welcome</td></tr>
+  </table></div>
+</div></section>
+
+<section id="install"><div class="wrap">
+  <h2>Install</h2>
+  <p class="sub">Arch family (needs an AUR helper such as <code>yay</code> or <code>paru</code>) and Ubuntu 24.04 are tested. Other Debian-family
+    distros should work the same way; Fedora and openSUSE are attempted but not tested yet.</p>
+  <div class="steps">
+    <div class="step"><div>
+      <h4>Get it</h4>
+      <pre>git clone https://github.com/grumpybollocks/Logitech-G510s-LCD-control.git
+cd Logitech-G510s-LCD-control</pre>
+    </div></div>
+    <div class="step"><div>
+      <h4>Run the installer as your normal user</h4>
+      <p>It goes through 8 steps, prints <code>[ok]</code> or <code>[missing]</code> for every item as it goes and installs only what's missing; it asks for your <code>sudo</code> password once,
+        and asks you to unplug and replug the keyboard once. Safe to re-run any time.</p>
+      <pre>./install.sh            <span class="c"># --yes skips waiting for the replug</span></pre>
+    </div></div>
+    <div class="step"><div>
+      <h4>Check it worked</h4>
+      <p>All three should say <code>active (running)</code>. If the LCD stays blank, unplug and replug the keyboard once.</p>
+      <pre>systemctl --user status g510-lcd-stats g510-lcd-buttons g510-macro-daemon</pre>
+    </div></div>
+    <div class="step"><div>
+      <h4>Open the app</h4>
+      <p>From the <b>G510 LCD - App</b> shortcut on your desktop or in the app menu. If the installer added you to the
+        <code>input</code> group, log out and back in first.</p>
+    </div></div>
+  </div>
+  <p class="sub" style="margin-top:26px">Needs: a recent kernel with the <code>hid-lg-g15</code> driver, PipeWire with <code>pipewire-pulse</code> for the
+    visualizer, any desktop. Where a distro doesn't package <code>libg15</code>/<code>libg15render</code> 1.3.1 or a new enough
+    <code>ydotool</code> (1.0.4), the installer builds them into <code>/usr/local</code> from checksum-pinned releases. It also remaps the
+    keyboard's Stop media key to Play/Pause (see the README to undo). Full list:
+    <a href="https://github.com/grumpybollocks/Logitech-G510s-LCD-control#install">README → Install</a>.</p>
+
+  <h3 id="uninstall" style="margin-top:34px">Uninstall</h3>
+  <p class="sub">From the checkout, as your normal user. It lists what it will remove and asks first: the user services
+    (and <code>ydotool</code>'s), the udev rule, the Stop-key remap, <code>/usr/local/lib/g510-lcd</code> and the desktop shortcuts.</p>
+  <pre>./uninstall.sh          <span class="c"># --deps: also what it built into /usr/local · --purge: also your settings</span></pre>
+  <p class="sub" style="margin-top:14px">Distro and AUR packages are never removed. You stay in the <code>input</code> group, since other programs may
+    need it; to leave it: <code>sudo gpasswd -d "$USER" input</code>, then log out and back in.</p>
+</div></section>
+
+<section id="how"><div class="wrap">
+  <h2>How it works</h2>
+  <p class="sub">Three small programs run as <code>systemd --user</code> services; the app is the editor. The installer also
+    enables a one-shot that restores your backlight colour at login, and <code>ydotool</code>'s service for macro replay.</p>
+  <div class="flow">
+    <div class="box"><b>g510-lcd-stats</b><span>C. Draws every LCD screen and sends it to <code>/dev/g510-lcd</code> (hidraw).</span></div>
+    <div class="box"><b>g510-lcd-buttons</b><span>C. Listens to L1–L5 on <code>/dev/g510-keys</code> and switches screens.</span></div>
+    <div class="box"><b>g510-macro-daemon</b><span>Python. Listens to G1–G18 and M1–M3 and replays macros through <code>ydotool</code>.</span></div>
+    <div class="box"><b>G510s Control app</b><span>PyQt5. Backlight, macros and the Custom Screens builder; previews come from the LCD program itself.</span></div>
+    <div class="box"><b>udev</b><span>Stable <code>/dev/g510-lcd</code> and <code>/dev/g510-keys</code> links, whatever device numbers this boot gives.</span></div>
+  </div>
+  <p class="sub" style="margin-top:26px">Your settings (custom screens, images, macros, boot colour) live in <code>~/.local/share/g510-lcd</code>, not in the checkout.</p>
+</div></section>
+
+<section id="safety"><div class="wrap">
+  <h2>Safety &amp; privacy</h2>
+  <p class="sub">What the install changes, in plain words.</p>
+  <div class="grid">
+    <div class="card"><div class="ic">🔑</div><h3>The <code>input</code> group</h3><p>The LCD, G-keys, backlight and macro replay need it, so the installer adds you. It also lets any program you run read every keyboard and send keystrokes.</p></div>
+    <div class="card"><div class="ic">⌨️</div><h3>Macros can run commands</h3><p>A G-key set to a shell command runs it as you on every press. Macros live in <code>~/.local/share/g510-lcd/macros.json</code>.</p></div>
+    <div class="card"><div class="ic">🛡️</div><h3>What runs as root</h3><p>Only the installer's <code>sudo</code> steps and udev, which makes the LED files writable and restores your colour: it reads your colour file as you, accepts only numbers 0–255 and never runs it.</p></div>
+    <div class="card"><div class="ic">🎧</div><h3>Audio, no network</h3><p>The visualizer records what your speakers play only while it's on the LCD, into RAM, analysed locally. Nothing uses the network.</p></div>
+  </div>
+</div></section>
+
+<section id="troubleshooting"><div class="wrap">
+  <h2>Troubleshooting</h2>
+  <div class="tbl"><table>
+    <tr><th>Symptom</th><th>Try</th></tr>
+    <tr><td>"Permission denied", or nothing works right after installing</td><td>Log out and back in (or reboot): the new <code>input</code> group only applies to new logins. <code>id -nG</code> should list <code>input</code></td></tr>
+    <tr><td>LCD blank</td><td>Replug the keyboard, then <code>systemctl --user status g510-lcd-stats g510-lcd-buttons g510-macro-daemon</code></td></tr>
+    <tr><td>G-key macros don't replay (M1–M3 still switch)</td><td><code>ydotool</code> isn't running: <code>systemctl --user enable --now ydotool</code> (<code>unmask</code> it first if it's masked)</td></tr>
+    <tr><td>No visualizer bars</td><td>Bars only move while something plays. Needs <code>parec</code> (<code>libpulse</code> on Arch, <code>pulseaudio-utils</code> on Debian/Ubuntu) and <code>pipewire-pulse</code> running</td></tr>
+    <tr><td>Media keys act oddly in Brave (KDE)</td><td>Turn off the media-control feature of Brave's <i>Plasma Integration</i> extension: both register the same tab as a player</td></tr>
+  </table></div>
+  <p class="sub" style="margin-top:22px">Logs: the <b>G510 LCD - View Logs</b> shortcut follows them live, or run
+    <code>journalctl --user -u g510-lcd-stats -u g510-lcd-buttons -u g510-macro-daemon -f</code>.</p>
+  <h3 id="bugs">Reporting bugs</h3>
+  <p class="sub"><a href="https://github.com/grumpybollocks/Logitech-G510s-LCD-control/issues/new?template=bug_report.md">Open an issue</a> with your distro and version,
+    <code>uname -r</code>, how you installed, the output of <code>src/g510_lcd_stats --sensors</code> (run from the checkout),
+    <code>journalctl --user -u g510-lcd-stats -u g510-lcd-buttons -u g510-macro-daemon -b --no-pager | tail -n 100</code>
+    and <code>lsusb | grep 046d</code>. Glance over it for anything private first.</p>
+</div></section>
+
+<section id="faq"><div class="wrap">
+  <h2>FAQ</h2>
+  <details><summary>Does it work with the original G510 or only the G510s?</summary>
+    <p>Both: the G510 and the G510s, with or without a headset plugged in.</p></details>
+  <details><summary>Will my media and volume keys still work?</summary>
+    <p>Yes. The keyboard stays with the kernel's own <code>hid-lg-g15</code> driver; the LCD is written through <code>hidraw</code>
+      without detaching anything. One change: the installer makes the Stop key send Play/Pause. Delete
+      <code>/etc/udev/hwdb.d/91-g510-stop-to-playpause.hwdb</code> and run <code>sudo systemd-hwdb update</code> to get Stop back.</p></details>
+  <details><summary>The LCD stays blank after installing.</summary>
+    <p>Unplug and replug the keyboard once so the new udev rules apply, then check the three services with
+      <code>systemctl --user status g510-lcd-stats g510-lcd-buttons g510-macro-daemon</code>.</p></details>
+  <details><summary>A temperature shows N/A.</summary>
+    <p>Run <code>src/g510_lcd_stats --sensors</code> to see what was found. Many motherboards need their sensor driver loaded:
+      <code>sudo sensors-detect</code> and load what it suggests (often <code>sudo modprobe nct6775</code>). Intel integrated graphics
+      have no temperature sensor at all.</p></details>
+  <details><summary>Does the visualizer only work with one music app?</summary>
+    <p>No. It listens to whatever your speakers play, so Spotify, a browser tab, VLC or a game all work, with nothing to configure.</p></details>
+  <details><summary>Do I need to save in the app?</summary>
+    <p>No. Every change is written to disk immediately. <b>Save All Settings Now</b> exists to prove it: it re-saves and reads everything back.</p></details>
+  <details><summary>Is it on the AUR?</summary>
+    <p>Not yet. A PKGBUILD lives in <code>packaging/</code>; for now install with <code>./install.sh</code>.</p></details>
+  <details><summary>Looking for the G910?</summary>
+    <p>That app has its own repo: <a href="https://github.com/grumpybollocks/g910-control">grumpybollocks/g910-control</a>.</p></details>
+</div></section>
+
+<footer><div class="wrap">
+  Logitech G510s for Linux · <a href="https://github.com/grumpybollocks/Logitech-G510s-LCD-control">GitHub</a> ·
+  <a href="https://github.com/grumpybollocks/Logitech-G510s-LCD-control/blob/main/LICENSE">MIT licence</a><br>
+  Not affiliated with Logitech. Logitech and G510 are trademarks of their owner.
+</div></footer>
+
+</body>
+</html>

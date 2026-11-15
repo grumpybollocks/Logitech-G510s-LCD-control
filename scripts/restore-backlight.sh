@@ -21,7 +21,7 @@ LED=/sys/class/leds/g15::kbd_backlight
 
 # Optional $1 = user name (the login unit passes %u; a boot-time unit can pass
 # one too). It must be an existing account -- checked with getent, not a name
-# pattern, so names like "Alex" or "alex.tria" (LDAP/sssd) work. A leading "-"
+# pattern, so names like "JDoe" or "j.doe" (LDAP/sssd) work. A leading "-"
 # is refused so it can never be read as an option.
 if [ -n "${1:-}" ]; then
     case "$1" in -*) exit 0 ;; esac
