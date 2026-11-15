@@ -14,6 +14,7 @@ of a dict -- treated as "keys" for backward compatibility.
 """
 import json
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -150,6 +151,44 @@ def write_active_profile(name):
         pass
 
 
+def launch_command(cmd):
+    """Start a "command" macro without waiting for it. Returns a
+    (process, fallback_cmd) pair for reap_running().
+
+    (2026-11-15) It used to be a plain Popen child of this service, so it
+    lived in the service's cgroup -- and the default KillMode=control-group
+    killed every app launched from a G-key (unsaved work and all) whenever
+    the macro service stopped, restarted or crashed. Now it gets its own
+    transient unit via systemd-run (which returns as soon as the unit is
+    started); if systemd-run is missing or fails, reap_running() falls back
+    to the old direct launch."""
+    if shutil.which("systemd-run"):
+        try:
+            return (subprocess.Popen(["systemd-run", "--user", "--collect", "--quiet",
+                                      "--", "sh", "-c", cmd],
+                                     stdin=subprocess.DEVNULL, start_new_session=True), cmd)
+        except OSError:
+            pass
+    return (subprocess.Popen(cmd, shell=True, start_new_session=True), None)
+
+
+def reap_running(running):
+    """Drop finished commands (no zombies); a systemd-run launcher that
+    failed is replaced by a direct launch of the same command."""
+    still = []
+    for p, fallback in running:
+        rc = p.poll()
+        if rc is None:
+            still.append((p, fallback))
+        elif rc != 0 and fallback is not None:
+            print(f"systemd-run failed (exit {rc}) -- starting the command directly", flush=True)
+            try:
+                still.append((subprocess.Popen(fallback, shell=True, start_new_session=True), None))
+            except OSError as e:
+                print(f"could not start command: {e}", flush=True)
+    return still
+
+
 def main():
     """Real bug, found via live use after the canvas rearchitecture:
     this loop used to be a blocking dev.read_loop() that only ever
@@ -269,7 +308,7 @@ def main():
             relight_at = 0.0
 
         if running:
-            running[:] = [p for p in running if p.poll() is None]
+            running[:] = reap_running(running)
 
         if events:
             for event in events:
@@ -313,7 +352,7 @@ def main():
                             print(f"{gkey}: command macro is empty -- ignored", flush=True)
                             continue
                         try:
-                            running.append(subprocess.Popen(cmd, shell=True, start_new_session=True))
+                            running.append(launch_command(cmd))
                         except OSError as e:
                             print(f"{gkey}: could not start command: {e}", flush=True)
 

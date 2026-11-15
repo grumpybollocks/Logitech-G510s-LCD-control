@@ -156,6 +156,62 @@ int main(void) {
         CHECK(strchr(d, '%') && bar >= 0, "setting pointing at a mounted filesystem -> its usage (got '%s')", d);
     }
 
+    /* ---- 2026-11-15 bug-check ---- */
+    /* 9. the hung-player back-off reaches a fresh process (the GUI's --preview):
+          section 7 left the hung fake playerctl first on PATH */
+    {
+        struct stat st;
+        CHECK(stat(media_skip_path(), &st) == 0, "the back-off is shared in %s", media_skip_path());
+        g_media_skip_until = 0;           /* = a brand-new --preview process */
+        t0 = now_ms();
+        update_media_info();
+        CHECK(now_ms() - t0 < 200, "a fresh process honours it instead of waiting ~2 s (%ld ms)", now_ms() - t0);
+        g_media_skip_until = 0;
+        put(media_skip_path(), "99999999999\n");   /* nonsense / from an earlier boot */
+        media_skip_load();
+        CHECK(g_media_skip_until == 0, "a back-off further out than 30 s is ignored");
+        unlink(media_skip_path());
+    }
+
+    /* 10. an imported image with a long (multi-byte) name is still loaded */
+    {
+        char cs[400], body[600], name[200];
+        memset(name, 'a', 150);
+        name[150] = 0;
+        snprintf(cs, sizeof cs, "%s/.local/share/g510-lcd/custom_screens.txt", home);
+        snprintf(body, sizeof body, "SCREEN L2\nIMAGE path=custom_screen_images/%s.bin x=0 y=0 width=8 height=8\n", name);
+        put(cs, body);
+        load_custom_screens();
+        custom_screen_t *s = &custom_screens[0];
+        CHECK(s->image_count == 1 && strlen(s->images[0].path) == strlen("custom_screen_images/.bin") + 150,
+              "a %zu-byte image path is kept whole (was cut at 127 -> file never found)",
+              strlen("custom_screen_images/.bin") + 150);
+    }
+
+    /* 11. an unknown sensor keeps its bounds slot, so later drag boxes don't shift */
+    {
+        char cs[400], out[400], meta[420];
+        snprintf(cs, sizeof cs, "%s/.local/share/g510-lcd/custom_screens.txt", home);
+        put(cs, "SCREEN L2\nELEMENT sensor=NO_SUCH_SENSOR style=number x=0 y=0\n"
+                "ELEMENT sensor=CPU_PCT style=number x=0 y=20\n");
+        g15canvas canvas;
+        memset(&canvas, 0, sizeof canvas);
+        g15r_initCanvas(&canvas);
+        draw_custom_screen(&canvas, 2);
+        snprintf(out, sizeof out, "%s/preview.ppm", run);
+        write_bounds_meta(out);
+        snprintf(meta, sizeof meta, "%s.meta", out);
+        FILE *f = fopen(meta, "r");
+        char l0[200] = "", l1[200] = "";
+        if (f) {
+            if (!fgets(l0, sizeof l0, f)) l0[0] = 0;
+            if (!fgets(l1, sizeof l1, f)) l1[0] = 0;
+            fclose(f);
+        }
+        CHECK(strcmp(l0, "0\n") == 0 && strncmp(l1, "1 label_x1=0 label_y1=20 ", 25) == 0,
+              "meta: empty line 0 for the unknown sensor, CPU_PCT's bounds on line 1 (got '%.40s' / '%.40s')", l0, l1);
+    }
+
     printf("bugcheck: %d passed, %d failed\n", passes, fails);
     return fails ? 1 : 0;
 }

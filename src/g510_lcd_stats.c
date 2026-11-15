@@ -962,7 +962,41 @@ static void strip_browser_tab_noise(char *title) {
 
 static time_t g_media_skip_until = 0;   /* back-off after a hung player (see below) */
 
+/* (2026-11-15) The back-off is shared through a tiny file: the GUI's
+   --preview is a fresh process every 0.12-2 s (on its GUI thread), so an
+   in-memory value never carried over and a hung player froze the app
+   ~2 s per preview. Both the service and --preview read and write it.
+   The value is mono_now() seconds (CLOCK_BOOTTIME, the same for every
+   process); anything further out than the 30 s back-off is stale. */
+static const char *media_skip_path(void) {
+    static char path[256];
+    const char *runtime = getenv("XDG_RUNTIME_DIR");
+    if (runtime && runtime[0]) snprintf(path, sizeof(path), "%s/g510lcd_media_skip", runtime);
+    else snprintf(path, sizeof(path), "/tmp/g510-%u-media_skip", (unsigned)getuid());
+    return path;
+}
+
+static void media_skip_load(void) {
+    FILE *f = fopen(media_skip_path(), "r");
+    if (!f) return;
+    long long v;
+    if (fscanf(f, "%lld", &v) == 1 && v > (long long)g_media_skip_until && v <= (long long)mono_now() + 30)
+        g_media_skip_until = (time_t)v;
+    fclose(f);
+}
+
+static void media_skip_save(void) {
+    char tmp[300];
+    snprintf(tmp, sizeof(tmp), "%s.%d", media_skip_path(), (int)getpid());
+    FILE *f = fopen(tmp, "w");
+    if (!f) return;
+    fprintf(f, "%lld\n", (long long)g_media_skip_until);
+    if (fclose(f) == 0) rename(tmp, media_skip_path());
+    else unlink(tmp);
+}
+
 static void update_media_info(void) {
+    media_skip_load();
     if (mono_now() < g_media_skip_until) return;
     g_media_title[0] = 0;
     g_media_artist[0] = 0;
@@ -1062,7 +1096,10 @@ static void update_media_info(void) {
     /* (2026-11-14) 124 = timeout(1) had to kill playerctl: a player is hung.
        Don't stall the loop ~2 s on every update -- try again in 30 s. */
     int st = pclose(p);
-    if (st != -1 && WIFEXITED(st) && WEXITSTATUS(st) == 124) g_media_skip_until = mono_now() + 30;
+    if (st != -1 && WIFEXITED(st) && WEXITSTATUS(st) == 124) {
+        g_media_skip_until = mono_now() + 30;
+        media_skip_save();
+    }
 
     strncpy(g_media_title, title_buf, sizeof(g_media_title) - 1);
     strncpy(g_media_artist, artist_buf, sizeof(g_media_artist) - 1);
@@ -1953,7 +1990,8 @@ typedef struct {
    image's own aspect ratio; only position (x, y) is editable, via the
    same drag mechanic as sensor elements. */
 typedef struct {
-    char path[128]; /* relative to data_dir(), e.g. "custom_screen_images/logo.bin" */
+    char path[192]; /* relative to data_dir(), e.g. "custom_screen_images/logo.bin"; same size as
+                       the parser's val[] below (was 128: a longer name was silently never drawn) */
     int x, y, width, height;
 } image_t;
 
@@ -2204,6 +2242,7 @@ static void load_custom_screens(void) {
    main()); the live LCD-writing path never touches this, zero cost
    there. */
 typedef struct {
+    int unknown; /* sensor name not found: nothing drawn, slot left empty */
     int label_x1, label_y1, label_x2, label_y2; /* covers just the label glyph */
     int is_bar;
     int bar_x1, bar_x2, bar_y1, bar_y2;           /* only valid if is_bar */
@@ -2226,7 +2265,14 @@ static void draw_element(g15canvas *c, element_t *el) {
        definitions live in a table that is refreshed once a second, so a
        pointer held across that refresh could describe another row. */
     const sensor_def_t *found = find_sensor(el->sensor);
-    if (!found) return;
+    if (!found) {
+        /* (2026-11-15) Still take this element's bounds slot (written as an
+           empty line): the GUI looks bounds up by a sensor's rank among
+           ALL sensor elements, so skipping it shifted every later sensor's
+           drag box onto the wrong element. */
+        if (g_element_bounds_count < MAX_ELEMENTS) g_element_bounds[g_element_bounds_count++].unknown = 1;
+        return;
+    }
     char label_copy[16];
     snprintf(label_copy, sizeof(label_copy), "%s", found->label);
     sensor_def_t def_copy = *found;
@@ -2240,6 +2286,7 @@ static void draw_element(g15canvas *c, element_t *el) {
     element_bounds_t *b = (g_element_bounds_count < MAX_ELEMENTS)
         ? &g_element_bounds[g_element_bounds_count++] : NULL;
     if (b) {
+        b->unknown = 0;
         b->label_x1 = el->x; b->label_y1 = el->y;
         b->label_x2 = el->x + label_w; b->label_y2 = el->y + label_text_height();
         b->is_bar = 0;
@@ -2319,7 +2366,9 @@ static void write_bounds_meta(const char *outpath) {
     if (!f) return;
     for (int i = 0; i < g_element_bounds_count; i++) {
         element_bounds_t *b = &g_element_bounds[i];
-        if (b->is_bar) {
+        if (b->unknown) {
+            fprintf(f, "%d\n", i);   /* no bounds: the GUI uses its approximate box */
+        } else if (b->is_bar) {
             fprintf(f, "%d label_x1=%d label_y1=%d label_x2=%d label_y2=%d bar_x1=%d bar_y1=%d bar_x2=%d bar_y2=%d value_x2=%d\n",
                     i, b->label_x1, b->label_y1, b->label_x2, b->label_y2,
                     b->bar_x1, b->bar_y1, b->bar_x2, b->bar_y2, b->value_x2);
