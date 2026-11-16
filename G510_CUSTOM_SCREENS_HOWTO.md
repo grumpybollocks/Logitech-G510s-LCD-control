@@ -73,6 +73,17 @@ resize, add, remove) saves itself instantly.
   the dropdown updates as you change the selection, so you don't have
   to guess what "GPU Hotspot Temp" or "Max Temp Seen" actually is.
 
+- **Fan speeds (optional)** — if you run the FanPilot fan-control
+  app, the sensor dropdown gets extra **"FanPilot: …"** entries at the
+  end: fan speeds, fan duty % and nicely named temperatures. Use them
+  like any other sensor. They show N/A while FanPilot isn't running.
+  Details: [docs/FANPILOT_SENSORS.md](docs/FANPILOT_SENSORS.md).
+- **Long element lists scroll** — the "Elements on this screen" list
+  uses all the free height on the right and gets a scrollbar when it's
+  full. A newly added element scrolls into view. Make the window
+  taller (or maximise it) to see more rows at once. On a small screen
+  the whole right-hand panel scrolls.
+
 ## Bringing it to the real keyboard
 
 Once your custom screen looks right in the app, press the matching

@@ -46,15 +46,16 @@ def write(stamp=None, rows=ROWS):
         f.write(f"# fanpilot-sensors 1 {int(stamp if stamp is not None else time.time())}\n{rows}")
 
 
+DEFAULT_INSTALL_PATHS = g.FANPILOT_INSTALL_PATHS
 g.FANPILOT_SENSORS_FILE = SENS
-g.FANPILOT_DAEMON = NOT_INSTALLED
+g.FANPILOT_INSTALL_PATHS = (NOT_INSTALLED,)
 base = len(g.SENSOR_CHOICES)
 
 tab = g.CustomScreensTab()
 combo = tab.sensor_combo
 check(combo.count() == base, f"no FanPilot: dropdown unchanged ({combo.count()} items)")
 
-g.FANPILOT_DAEMON = INSTALLED
+g.FANPILOT_INSTALL_PATHS = (NOT_INSTALLED, INSTALLED)   # any one of them counts
 tab.reload_fanpilot_choices()
 hint = combo.model().item(combo.count() - 1)
 check(combo.count() == base + 2 and hint is not None and not hint.isEnabled(),
@@ -140,14 +141,33 @@ write(rows="bad line\nx\tvolts\tV\tv\t1\nt.ok/temp1\ttemp\tOK\tfine\tabc\n")
 items = g.fanpilot_sensors(SENS)
 check(len(items) == 1 and items[0]["value"] is None, "damaged rows skipped, non-number -> no value")
 
-# same limits as the C reader: 64 rows, keys up to 47 BYTES, lines up to 254 bytes
-write(rows="".join(f"t.s{i}/temp1\ttemp\tS\ts\t30\n" for i in range(80)))
-check(len(g.fanpilot_sensors(SENS)) == 64, "at most 64 rows (C reader's FP_MAX)")
+# same limits as the C reader: 256 rows, keys up to 47 BYTES, lines up to 510 bytes
+write(rows="".join(f"t.s{i}/temp1\ttemp\tS\ts\t30\n" for i in range(300)))
+check(len(g.fanpilot_sensors(SENS)) == 256, "at most 256 rows (C reader's FP_MAX)")
 key_ascii = "t." + "a" * 44           # 46 bytes: fits
 key_utf8 = "t." + "é" * 23            # 25 characters but 48 bytes: the LCD can't store it
-write(rows=f"{key_ascii}\ttemp\tA\ta\t30\n{key_utf8}\ttemp\tU\tu\t30\nt.long/temp1\ttemp\tL\t{'x' * 300}\t30\n")
+write(rows=f"{key_ascii}\ttemp\tA\ta\t30\n{key_utf8}\ttemp\tU\tu\t30\nt.long/temp1\ttemp\tL\t{'x' * 600}\t30\n")
 keys = {it["key"] for it in g.fanpilot_sensors(SENS)}
 check(keys == {"FP:" + key_ascii}, "key length counted in bytes; over-long line skipped")
+
+# universal (2026-11-16): a sensor-rich PC keeps its fan rows; real FanPilot 1.0.x id shapes
+rows = "".join(f"t.drivetemp@{i}:0:0:0/temp1\ttemp\tHDD\tDrive {i}\t30\n" for i in range(200))
+rows += ("rpm.nct6798@nct6775.656/pwm7\trpm\tFAN7\tPump (W_PUMP+) speed\t2400\n"
+         "t.nvidia@00000000:01:00.0/temp1\ttemp\tGPU\tNVIDIA GeForce RTX 4070\t47.0\n"
+         "t.k10temp/temp1\ttemp\tTOOLONG\tCPU (Tctl)\t50\n"
+         f"rpm.it8688/pwm1\trpm\tCPUF\t{'n' * 400}\t1500\n")
+write(rows=rows)
+items = {it["key"]: it for it in g.fanpilot_sensors(SENS)}
+check(len(items) == 204, f"200 temps + 4 more rows all kept (got {len(items)})")
+check(items.get("FP:rpm.nct6798@nct6775.656/pwm7", {}).get("value") == 2400, "fan row after 200 temperatures")
+check(items.get("FP:t.nvidia@00000000:01:00.0/temp1", {}).get("value") == 47.0, "NVIDIA bus-id key")
+check(items.get("FP:rpm.it8688/pwm1", {}).get("value") == 1500, "400-byte long label: line still read")
+check(items.get("FP:t.k10temp/temp1", {}).get("short") == "TOOL", "short label cut to 4 characters")
+
+# packaged FanPilot (/usr/bin + /usr/lib/systemd) counts as installed, like install.sh's /usr/local/bin
+check({"/usr/local/bin/fanpilotd", "/usr/bin/fanpilotd", "/usr/lib/systemd/system/fanpilotd.service",
+       "/etc/systemd/system/fanpilotd.service"} <= set(DEFAULT_INSTALL_PATHS),
+      "installed check covers install.sh (/usr/local/bin) and the Arch/.deb/.rpm packages (/usr/bin)")
 
 print(f"fanpilot GUI: {passes} passed, {fails} failed")
 sys.exit(1 if fails else 0)

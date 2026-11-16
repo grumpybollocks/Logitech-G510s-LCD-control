@@ -25,9 +25,12 @@ static void write_file(const char *body) {
 }
 
 static void write_snapshot(long long stamp, const char *rows) {
-    char buf[8192];
-    snprintf(buf, sizeof(buf), "# fanpilot-sensors 1 %lld\n%s", stamp, rows);
+    size_t n = strlen(rows) + 64;      /* big snapshots (hundreds of rows) must not be cut short */
+    char *buf = malloc(n);
+    if (!buf) exit(2);
+    snprintf(buf, n, "# fanpilot-sensors 1 %lld\n%s", stamp, rows);
     write_file(buf);
+    free(buf);
 }
 
 static void value(const char *key, char *disp, size_t len, double *bar) {
@@ -94,7 +97,7 @@ int main(void) {
         strcat(rows, "t.a/temp1\tvolts\tV\tunknown kind\t1.2\n");
         strcat(rows, "t.b/temp1\ttemp\tB\tnot a number\t4x\n");
         strcat(rows, "t.long/temp1\ttemp\tLONG\t");
-        for (int i = 0; i < 400; i++) strcat(rows, "x");      /* longer than the line buffer */
+        for (int i = 0; i < 600; i++) strcat(rows, "x");      /* longer than the 512-byte line buffer */
         strcat(rows, "\t50\n");
         strcat(rows, "t.ok/temp1\ttemp\tOKAY\tfine\t41.0\n");
         write_snapshot(now, rows);
@@ -170,6 +173,46 @@ int main(void) {
         }
         write_snapshot(now, rows);
         CHECK(g_fp_count == FP_MAX, "%d rows -> capped at FP_MAX=%d", FP_MAX + 20, FP_MAX);
+    }
+
+    /* --- universal (2026-11-16): any PC FanPilot supports --- */
+    {
+        /* A sensor-rich PC (many drives, DIMMs, CCDs, two GPUs): FanPilot writes
+           temperatures first and fans last -- the fan rows must still be read. */
+        static char rows[64 * 1024];
+        rows[0] = 0;
+        for (int i = 0; i < 200; i++) {
+            char line[64];
+            snprintf(line, sizeof line, "t.drivetemp@%d:0:0:0/temp1\ttemp\tHDD\tDrive %d\t30\n", i, i);
+            strcat(rows, line);
+        }
+        /* real id shapes from FanPilot 1.0.x: duplicate chips get @<device>, NVIDIA @<bus id> */
+        strcat(rows, "rpm.nct6798@nct6775.656/pwm7\trpm\tFAN7\tPump (W_PUMP+) speed\t2400\n");
+        strcat(rows, "pct.nct6798@nct6775.656/pwm7\tpct\tFN7%\tPump (W_PUMP+) duty\t60\n");
+        strcat(rows, "t.nvidia@00000000:01:00.0/temp1\ttemp\tGPU\tNVIDIA GeForce RTX 4070\t47.0\n");
+        strcat(rows, "rpm.amdgpu@0000:03:00.0/fan1\trpm\tGPUF\tGraphics card fan (0000:03:00.0) speed\t900\n");
+        strcat(rows, "t.k10temp/temp1\ttemp\tTOOLONG\tCPU (Tctl)\t50\n");
+        {   /* a user-chosen long name (~400 bytes) is still a valid line */
+            char line[600];
+            char name[401];
+            memset(name, 'n', 400); name[400] = 0;
+            snprintf(line, sizeof line, "rpm.it8688/pwm1\trpm\tCPUF\t%s\t1500\n", name);
+            strcat(rows, line);
+        }
+        write_snapshot(now, rows);
+        CHECK(g_fp_count == 206, "200 temps + 6 more rows all kept (got %d, FP_MAX=%d)", g_fp_count, FP_MAX);
+        value("FP:rpm.nct6798@nct6775.656/pwm7", d, sizeof d, &bar);
+        CHECK(strcmp(d, "2400") == 0, "fan row after 200 temperatures still read (got '%s')", d);
+        value("FP:pct.nct6798@nct6775.656/pwm7", d, sizeof d, &bar);
+        CHECK(strcmp(d, "60%") == 0 && bar == 60, "duty of a chip@device fan (got '%s')", d);
+        value("FP:t.nvidia@00000000:01:00.0/temp1", d, sizeof d, &bar);
+        CHECK(strcmp(d, "47\xB0" "C") == 0, "NVIDIA id with bus id (colons, dots) (got '%s')", d);
+        value("FP:rpm.amdgpu@0000:03:00.0/fan1", d, sizeof d, &bar);
+        CHECK(strcmp(d, "900") == 0, "second AMD card fan (got '%s')", d);
+        value("FP:rpm.it8688/pwm1", d, sizeof d, &bar);
+        CHECK(strcmp(d, "1500") == 0, "400-byte long label: line still read (got '%s')", d);
+        const sensor_def_t *ld = find_sensor("FP:t.k10temp/temp1");
+        CHECK(ld && strcmp(ld->label, "TOOL") == 0, "short label cut to 4 characters (got '%s')", ld ? ld->label : "?");
     }
 
     /* --- reads at most once per second --- */

@@ -29,7 +29,7 @@ from PyQt5.QtWidgets import (
     QMessageBox, QDialog, QLineEdit, QSpinBox, QFrame, QScrollArea,
     QFileDialog, QInputDialog, QStatusBar,
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QRect, QPoint
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QRect, QPoint, QSize
 from PyQt5.QtGui import QImage, QPixmap, QColor, QPainter, QPen, QFontMetrics
 # evdev is deliberately NOT imported at module level -- direct request:
 # "make the app lighter, as much as possible". Confirmed via grep that
@@ -180,6 +180,40 @@ QWidget#Panel {
     background-color: #1c1c20;
     border: 1px solid #2a2a30;
     border-radius: 8px;
+}
+/* Custom Screens panel + its element list (2026-11-16): "i cant scroll the
+   list of added displaying elements" -- the default scrollbar was thin and
+   almost invisible on this dark panel, so a long list just looked cut off. */
+QScrollArea#PanelScroll, QScrollArea#ElementsScroll {
+    background: transparent;
+    border: none;
+}
+QScrollArea#PanelScroll > QWidget > QWidget#PanelScrollBody,
+QScrollArea#ElementsScroll > QWidget > QWidget#ElementsBody {
+    background: transparent;
+}
+QScrollArea#PanelScroll QScrollBar:vertical, QScrollArea#ElementsScroll QScrollBar:vertical {
+    width: 12px;
+    background: #26262c;
+    border: none;
+    border-radius: 6px;
+    margin: 0;
+}
+QScrollArea#PanelScroll QScrollBar::handle:vertical, QScrollArea#ElementsScroll QScrollBar::handle:vertical {
+    background: #6c7486;
+    min-height: 28px;
+    border-radius: 6px;
+}
+QScrollArea#PanelScroll QScrollBar::handle:vertical:hover, QScrollArea#ElementsScroll QScrollBar::handle:vertical:hover {
+    background: #8a94aa;
+}
+QScrollArea#PanelScroll QScrollBar::add-line:vertical, QScrollArea#PanelScroll QScrollBar::sub-line:vertical,
+QScrollArea#ElementsScroll QScrollBar::add-line:vertical, QScrollArea#ElementsScroll QScrollBar::sub-line:vertical {
+    height: 0;
+}
+QScrollArea#PanelScroll QScrollBar::add-page:vertical, QScrollArea#PanelScroll QScrollBar::sub-page:vertical,
+QScrollArea#ElementsScroll QScrollBar::add-page:vertical, QScrollArea#ElementsScroll QScrollBar::sub-page:vertical {
+    background: none;
 }
 QFrame#Separator {
     background-color: #2a2a30;
@@ -1051,8 +1085,20 @@ LEGACY_SENSOR_ALIASES = {"DISK_FRIGIDER_PCT": "DISK_SECONDARY_PCT"}
 # reads the same file (see fanpilot_load() there). Without FanPilot the
 # dropdown is exactly what it was before.
 FANPILOT_SENSORS_FILE = "/run/fanpilot/sensors.tsv"
-FANPILOT_DAEMON = "/usr/local/bin/fanpilotd"
+# "Is FanPilot installed?" (only decides whether the greyed-out "start FanPilot"
+# hint is shown). FanPilot's own install.sh puts it in /usr/local/bin; its
+# Arch/.deb/.rpm packages put it in /usr/bin with the unit in /usr/lib/systemd.
+FANPILOT_INSTALL_PATHS = (
+    "/usr/local/bin/fanpilotd",
+    "/usr/bin/fanpilotd",
+    "/etc/systemd/system/fanpilotd.service",
+    "/usr/lib/systemd/system/fanpilotd.service",
+)
 FANPILOT_MAX_AGE = 15  # seconds; FanPilot rewrites it every tick (interval up to 5 s)
+# Same limits as fanpilot_load() in g510_lcd_stats.c (see docs/FANPILOT_SENSORS.md):
+FANPILOT_MAX_ROWS = 256        # FanPilot lists temperatures first, fans last: keep room for every fan
+FANPILOT_MAX_LINE = 510        # bytes per line without the newline (C buffer is 512)
+FANPILOT_MAX_KEY = 47          # bytes; longer keys can't be stored by the LCD program
 _FP_UNITS = {"temp": "°C", "rpm": "RPM", "pct": "%"}
 
 
@@ -1074,25 +1120,29 @@ def fanpilot_sensors(path=None, max_age=FANPILOT_MAX_AGE):
         return []
     out = []
     # Same limits as fanpilot_load() in g510_lcd_stats.c, so this list never offers a sensor
-    # the LCD can't show: lines up to 254 bytes, at most 64 rows, keys up to 47 bytes.
+    # the LCD can't show.
     for line in lines[1:]:
-        if len(out) >= 64:
+        if len(out) >= FANPILOT_MAX_ROWS:
             break
-        if len(line.encode("utf-8", "replace")) > 254:
+        if len(line.encode("utf-8", "replace")) > FANPILOT_MAX_LINE:
             continue
         f = line.split("\t")
         if len(f) != 5 or not f[0] or f[1] not in _FP_UNITS:
             continue
-        if len(f[0].encode("utf-8", "replace")) > 47:
-            continue  # longer keys can't be stored by the LCD program
+        if len(f[0].encode("utf-8", "replace")) > FANPILOT_MAX_KEY:
+            continue
         try:
             value = float(f[4]) if f[4] else None
         except ValueError:
             value = None
         if value is not None and (not math.isfinite(value) or abs(value) >= 1e6):
             value = None
-        out.append({"key": "FP:" + f[0], "kind": f[1], "short": f[2], "label": f[3], "value": value})
+        out.append({"key": "FP:" + f[0], "kind": f[1], "short": f[2][:4], "label": f[3], "value": value})
     return out
+
+
+def fanpilot_installed():
+    return any(os.path.exists(p) for p in FANPILOT_INSTALL_PATHS)
 
 
 def register_fanpilot_sensors(items):
@@ -1131,6 +1181,7 @@ SCREEN_PREVIEW_KEYS = ["L1"] + CUSTOM_SCREEN_KEYS
 MAX_IMAGES_PER_SCREEN = 2  # matches MAX_IMAGES in g510_lcd_stats.c
 MAX_TEXTS_PER_SCREEN = 4  # matches MAX_TEXTS in g510_lcd_stats.c
 MAX_VISUALIZERS_PER_SCREEN = 1  # matches MAX_VISUALIZERS in g510_lcd_stats.c -- only one persistent audio-capture stream exists process-wide, a second visualizer element would just duplicate the same bar data
+CUSTOM_SCREENS_SCROLLBAR = 12   # width of the panel / element-list scrollbars (see the stylesheet)
 CUSTOM_SCREENS_PANEL_WIDTH = 230  # single source of truth -- also used to compute how much a row's label can show before it needs eliding, see refresh_elements_list()
 DEFAULT_VISUALIZER_WIDTH = 70
 DEFAULT_VISUALIZER_HEIGHT = 37
@@ -1832,6 +1883,20 @@ class ImageResizeWorker(QThread):
         self.finished_resize.emit(self.index, w, h, True)
 
 
+class _PanelScrollArea(QScrollArea):
+    """Scroll area for the Custom Screens side panel. A plain QScrollArea
+    asks for very little height, so the window (sized by adjustSize())
+    would open short and the panel would need scrolling right away. This
+    one asks for the panel's natural height plus room for ~6 element rows
+    -- the same window size as before -- and only scrolls when the window
+    really is shorter than that."""
+    def sizeHint(self):
+        w = self.widget()
+        if w is None:
+            return super().sizeHint()
+        return QSize(self.width(), w.minimumSizeHint().height() + 60)
+
+
 class CustomScreensTab(QWidget):
     """AIDA64-style dashboard builder for the L2-L5 buttons. Pick a
     screen, add sensors with a display style, drag them into place on
@@ -1914,7 +1979,7 @@ class CustomScreensTab(QWidget):
         # window's true center. Adding that same half-width as a fixed
         # left margin here closes exactly half that gap -- real
         # geometry, not a guessed pixel count.
-        root.addSpacing(CUSTOM_SCREENS_PANEL_WIDTH // 2)
+        root.addSpacing((CUSTOM_SCREENS_PANEL_WIDTH + CUSTOM_SCREENS_SCROLLBAR + 2) // 2)  # panel + its scroll area's bar
         root.addLayout(canvas_col, stretch=1)
 
         panel = QWidget()
@@ -2037,28 +2102,55 @@ class CustomScreensTab(QWidget):
         panel_layout.addWidget(self.fix_overflow_btn)
 
         panel_layout.addWidget(QLabel("Elements on this screen:"))
-        # Fixed-height scroll area -- previously a long unbounded list
-        # of elements would push the whole layout down past the
-        # preview as you added more (reported directly: "if i add too
-        # many items they just fall under the preview screen"). This
-        # caps it so the window shape never depends on element count.
-        elements_scroll = QScrollArea()
+        # Scrolling list -- previously a long unbounded list of elements
+        # would push the whole layout down past the preview as you added
+        # more ("if i add too many items they just fall under the preview
+        # screen"), so the window shape must never depend on element count.
+        # 2026-11-16 ("i cant scroll the list of added displaying elements,
+        # when theyre too many they overflow under the window"): it was a
+        # fixed 180 px box (~6 rows) jammed at the bottom with a near-
+        # invisible scrollbar. Now it takes ALL the free height of the
+        # panel (stretch, at least ~4 rows), the scrollbar is clearly
+        # styled, a new element scrolls into view, and the whole panel
+        # sits in its own scroll area (below) so nothing can end up under
+        # the window edge on a short screen.
+        self.elements_scroll = elements_scroll = QScrollArea()
+        elements_scroll.setObjectName("ElementsScroll")
         elements_scroll.setWidgetResizable(True)
-        elements_scroll.setFixedHeight(180)
+        elements_scroll.setMinimumHeight(120)
         elements_scroll.setFrameShape(QFrame.NoFrame)
         elements_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        elements_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._elements_scroll_to_end = False
+        elements_scroll.verticalScrollBar().rangeChanged.connect(self._on_elements_range)
+        # the user scrolling by hand cancels a pending jump to the new row
+        elements_scroll.verticalScrollBar().actionTriggered.connect(
+            lambda _a: setattr(self, "_elements_scroll_to_end", False))
         elements_container = QWidget()
+        elements_container.setObjectName("ElementsBody")
         self.elements_layout = QVBoxLayout()
         self.elements_layout.setSpacing(2)
         self.elements_layout.setContentsMargins(0, 0, 0, 0)
         self.elements_layout.addStretch()
         elements_container.setLayout(self.elements_layout)
         elements_scroll.setWidget(elements_container)
-        panel_layout.addWidget(elements_scroll)
+        panel_layout.addWidget(elements_scroll, 1)   # stretch: the list gets every spare pixel
 
-        panel_layout.addStretch()
         panel.setLayout(panel_layout)
-        root.addWidget(panel)
+        # The panel itself scrolls when the window is shorter than the
+        # panel (small screen, scaled UI): every control and the list
+        # stay reachable instead of being cut off at the window bottom.
+        panel_scroll = _PanelScrollArea()
+        panel_scroll.setObjectName("PanelScroll")
+        panel_scroll.setWidgetResizable(True)
+        panel_scroll.setFrameShape(QFrame.NoFrame)
+        panel_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        panel_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        panel_scroll.setFixedWidth(CUSTOM_SCREENS_PANEL_WIDTH + CUSTOM_SCREENS_SCROLLBAR + 2)
+        panel_scroll.viewport().setObjectName("PanelScrollBody")
+        panel_scroll.setWidget(panel)
+        self.panel_scroll = panel_scroll
+        root.addWidget(panel_scroll)
 
         self.setLayout(root)
 
@@ -2142,7 +2234,7 @@ class CustomScreensTab(QWidget):
         items = fanpilot_sensors()
         register_fanpilot_sensors(items)
         keys = tuple((it["key"], it["label"], it["kind"]) for it in items)
-        installed = os.path.exists(FANPILOT_DAEMON)
+        installed = fanpilot_installed()
         state = (keys, installed)
         if state == self._fanpilot_keys:
             if hasattr(self, "sensor_desc_label"):
@@ -2604,6 +2696,10 @@ class CustomScreensTab(QWidget):
         self.refresh_preview()  # one final, accurate, untimed refresh
         self.preview_timer.start(1000)
 
+    def _on_elements_range(self, _lo, hi):
+        if self._elements_scroll_to_end:
+            self.elements_scroll.verticalScrollBar().setValue(hi)
+
     def refresh_elements_list(self):
         # Clear everything including the trailing stretch, then rebuild
         # it fresh each time -- simplest way to keep the stretch at the
@@ -2623,6 +2719,20 @@ class CustomScreensTab(QWidget):
             return
 
         elements = self.config[self.current_screen]
+        # A freshly added element lands at the END of the list: scroll
+        # there so it's visible at once (same screen, one more row).
+        # The scroll range only grows once Qt has laid the new row out, so
+        # the jump happens in _on_elements_range(). Another screen starts
+        # at the top of its own list.
+        shown = (self.current_screen, len(elements))
+        prev = getattr(self, "_elements_shown", None)
+        self._elements_shown = shown
+        bar = self.elements_scroll.verticalScrollBar()
+        self._elements_scroll_to_end = bool(prev and prev[0] == shown[0] and shown[1] > prev[1])
+        if self._elements_scroll_to_end:
+            bar.setValue(bar.maximum())
+        elif prev and prev[0] != shown[0]:
+            bar.setValue(0)
         # Recovery-button visibility: rough estimate (not pixel-perfect
         # -- this is just "does it look like something's clipped",
         # matching the same category of approximation already used
@@ -2660,7 +2770,12 @@ class CustomScreensTab(QWidget):
                 text.setToolTip(f"x={el['x']} y={el['y']} {el['width']}x{el['height']}px")
             else:
                 label = sensor_display_name(el["sensor"])
-                text = QLabel(f"{label} – {el['style']}")
+                if label.startswith("FanPilot: "):
+                    # the row is ~100 px wide: "FanPilot: ..." for every fan
+                    # told you nothing. The FP badge keeps the source visible.
+                    label = "FP " + label[len("FanPilot: "):]
+                # "number" is the default: only a bar is worth row width
+                text = QLabel(f"{label} – bar" if el.get("style") == "bar" else label)
                 text.setToolTip(f"x={el['x']} y={el['y']}" + (f" width={el.get('width', 40)}" if el.get("style") == "bar" else ""))
             text.setStyleSheet("font-size: 11px;")
             # Real regression found by direct testing: a long row label
@@ -2673,7 +2788,7 @@ class CustomScreensTab(QWidget):
             # panel and the remove button is always reachable. Full text
             # stays in the tooltip.
             has_size_btn = el.get("kind") in ("sensor", "text")
-            reserved = 24 + 24 + 20 + (56 if has_size_btn else 0)  # remove_btn + reset_btn + panel margins/spacing + size_btn if present
+            reserved = 24 + 24 + 20 + CUSTOM_SCREENS_SCROLLBAR + (56 if has_size_btn else 0)  # remove_btn + reset_btn + panel margins/spacing + list scrollbar + size_btn if present
             elide_budget = max(20, CUSTOM_SCREENS_PANEL_WIDTH - reserved)
             full_text = text.text()
             text.setText(QFontMetrics(text.font()).elidedText(full_text, Qt.ElideRight, elide_budget))
@@ -2787,6 +2902,18 @@ class MainWindow(QMainWindow):
         # natural size differs (bit us on the sibling G910 app) --
         # adjustSize() sizes the window to what's actually in it.
         self.adjustSize()
+        # adjustSize() caps a window at 2/3 of the screen height (720 px on
+        # 1080p). The Custom Screens panel used to force the full height
+        # through its minimum size -- and spill under the window edge on
+        # smaller screens. Now that the panel scrolls (2026-11-16), open at
+        # the natural size, but never bigger than the screen's free area.
+        screen = self.screen() if hasattr(self, "screen") else None
+        if screen is not None:
+            avail = screen.availableGeometry()
+            hint = self.sizeHint()
+            frame = 40   # title bar + borders, not part of the window's own size
+            self.resize(min(max(self.width(), hint.width()), avail.width()),
+                        min(max(self.height(), hint.height()), avail.height() - frame))
 
     def on_save_all(self):
         """Real disk round-trip verification, not a cosmetic no-op:
