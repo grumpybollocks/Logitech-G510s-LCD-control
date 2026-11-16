@@ -2246,7 +2246,7 @@ static void draw_element(g15canvas *c, element_t *el) {
        pointer held across that refresh could describe another row. */
     const sensor_def_t *found = find_sensor(el->sensor);
     if (!found) return;
-    char label_copy[16];
+    char label_copy[sizeof(g_fp[0].shortl)];  /* fits any label incl. a 4-character UTF-8 FanPilot one */
     snprintf(label_copy, sizeof(label_copy), "%s", found->label);
     sensor_def_t def_copy = *found;
     def_copy.label = label_copy;

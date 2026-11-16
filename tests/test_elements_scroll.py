@@ -93,5 +93,32 @@ QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)   # drop the prev
 texts = [lab.text() for lab in tab.elements_scroll.widget().findChildren(QLabel)]
 check(texts and texts[-1].startswith("FP Syst"), f"FanPilot row starts with its own name ({texts[-1:]})")
 
+# bugcheck 2026-11-16: the wheel over an unfocused dropdown scrolls the panel, it doesn't change the choice
+from PyQt5.QtCore import QPoint, QPointF, Qt  # noqa: E402
+from PyQt5.QtGui import QWheelEvent  # noqa: E402
+from PyQt5.QtTest import QTest  # noqa: E402
+w.resize(1244, 500)
+settle()
+pb.setValue(0)
+for name in ("sensor_combo", "style_combo", "font_size_combo"):
+    combo = getattr(tab, name)
+    combo.clearFocus()
+    before = combo.currentIndex()
+    ev = QWheelEvent(QPointF(5, 5), QPointF(combo.mapToGlobal(QPoint(5, 5))), QPoint(0, 0), QPoint(0, -120),
+                     Qt.NoButton, Qt.NoModifier, Qt.NoScrollPhase, False)
+    QApplication.sendEvent(combo, ev)
+    check(combo.currentIndex() == before, f"wheel over unfocused {name} doesn't change it")
+check(pb.value() > 0, f"...and the wheel scrolls the panel instead (panel at {pb.value()})")
+
+# bugcheck 2026-11-16: an add without overflow doesn't leave the jump-to-end flag set
+w.resize(1244, 1000)
+tab.config["L5"] = [dict(el)]
+tab.select_screen("L5")
+settle()
+tab.config["L5"].append(dict(el))
+tab.refresh_elements_list()
+QTest.qWait(400)
+check(not tab._elements_scroll_to_end, "jump-to-end flag cleared even when the list doesn't overflow")
+
 print(f"elements scroll: {passes} passed, {fails} failed")
 sys.exit(1 if fails else 0)
