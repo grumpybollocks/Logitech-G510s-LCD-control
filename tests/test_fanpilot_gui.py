@@ -164,6 +164,15 @@ check(items.get("FP:t.nvidia@00000000:01:00.0/temp1", {}).get("value") == 47.0, 
 check(items.get("FP:rpm.it8688/pwm1", {}).get("value") == 1500, "400-byte long label: line still read")
 check(items.get("FP:t.k10temp/temp1", {}).get("short") == "TOOL", "short label cut to 4 characters")
 
+# review 2026-11-16: same UTF-8 cut and CRLF length rule as the C reader
+write(rows="t.u/temp1\ttemp\tab€d€\tu\t30\n")
+check(g.fanpilot_sensors(SENS)[0]["short"] == "ab€d", "UTF-8 short label: 4 whole characters")
+base = len("t.c1/temp1\ttemp\tC\t\t30")
+pad = "p" * (510 - base)
+write(rows=f"t.c1/temp1\ttemp\tC\t{pad}\t30\r\nt.c2/temp1\ttemp\tC\t{pad[1:]}\t30\r\n")
+keys = {it["key"] for it in g.fanpilot_sensors(SENS)}
+check(keys == {"FP:t.c2/temp1"}, f"CRLF line: 510 bytes + \\r dropped, 509 + \\r kept ({keys})")
+
 # packaged FanPilot (/usr/bin + /usr/lib/systemd) counts as installed, like install.sh's /usr/local/bin
 check({"/usr/local/bin/fanpilotd", "/usr/bin/fanpilotd", "/usr/lib/systemd/system/fanpilotd.service",
        "/etc/systemd/system/fanpilotd.service"} <= set(DEFAULT_INSTALL_PATHS),

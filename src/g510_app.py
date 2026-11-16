@@ -188,7 +188,7 @@ QScrollArea#PanelScroll, QScrollArea#ElementsScroll {
     background: transparent;
     border: none;
 }
-QScrollArea#PanelScroll > QWidget > QWidget#PanelScrollBody,
+QScrollArea#PanelScroll > QWidget#PanelScrollBody,
 QScrollArea#ElementsScroll > QWidget > QWidget#ElementsBody {
     background: transparent;
 }
@@ -1106,8 +1106,9 @@ def fanpilot_sensors(path=None, max_age=FANPILOT_MAX_AGE):
     """FanPilot's current sensor list, [] if FanPilot isn't running.
     Each item: {key (with FP: prefix), kind, short, label, value}."""
     try:
-        with open(path or FANPILOT_SENSORS_FILE, encoding="utf-8", errors="replace") as f:
-            lines = f.read().splitlines()
+        # newline="": keep a CRLF's \r so the length check counts it like the C reader does
+        with open(path or FANPILOT_SENSORS_FILE, encoding="utf-8", errors="replace", newline="") as f:
+            lines = f.read().split("\n")
     except OSError:
         return []
     head = lines[0].split() if lines else []
@@ -1126,6 +1127,7 @@ def fanpilot_sensors(path=None, max_age=FANPILOT_MAX_AGE):
             break
         if len(line.encode("utf-8", "replace")) > FANPILOT_MAX_LINE:
             continue
+        line = line.rstrip("\r")
         f = line.split("\t")
         if len(f) != 5 or not f[0] or f[1] not in _FP_UNITS:
             continue
@@ -2699,6 +2701,8 @@ class CustomScreensTab(QWidget):
     def _on_elements_range(self, _lo, hi):
         if self._elements_scroll_to_end:
             self.elements_scroll.verticalScrollBar().setValue(hi)
+            # one jump per added element: a later resize must not snap the list back
+            QTimer.singleShot(300, lambda: setattr(self, "_elements_scroll_to_end", False))
 
     def refresh_elements_list(self):
         # Clear everything including the trailing stretch, then rebuild
