@@ -68,6 +68,13 @@ QT_QPA_PLATFORM=offscreen python3 -I ./test_fanpilot_gui.py 2>&1 \
 [ "${PIPESTATUS[0]}" -eq 0 ] || rc=1
 echo
 
+# Custom Screens element list scrolls and never ends up under the window edge
+echo "== test_elements_scroll"
+QT_QPA_PLATFORM=offscreen python3 -I ./test_elements_scroll.py 2>&1 \
+    | grep -v -e 'preview error' -e 'propagateSizeHints' -e 'QStandardPaths' | sed 's/^/  /'
+[ "${PIPESTATUS[0]}" -eq 0 ] || rc=1
+echo
+
 # 2026-11-14 bug-check of the app + macro service (offscreen, scratch HOME,
 # fake recorder thread -- never grabs your keyboard or touches your data)
 echo "== test_bugcheck_app"
