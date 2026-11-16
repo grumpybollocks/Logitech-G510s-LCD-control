@@ -29,7 +29,7 @@ from PyQt5.QtWidgets import (
     QMessageBox, QDialog, QLineEdit, QSpinBox, QFrame, QScrollArea,
     QFileDialog, QInputDialog, QStatusBar,
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QRect, QPoint, QSize
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QRect, QPoint, QSize, QObject, QEvent
 from PyQt5.QtGui import QImage, QPixmap, QColor, QPainter, QPen, QFontMetrics
 # evdev is deliberately NOT imported at module level -- direct request:
 # "make the app lighter, as much as possible". Confirmed via grep that
@@ -1885,6 +1885,26 @@ class ImageResizeWorker(QThread):
         self.finished_resize.emit(self.index, w, h, True)
 
 
+class _WheelOnlyWhenFocused(QObject):
+    """Event filter for the Custom Screens dropdowns: the side panel can
+    scroll now, and a wheel turn meant for the panel must not silently
+    pick another sensor/style/size under the pointer. The wheel only
+    changes a dropdown you clicked first; otherwise it scrolls the panel."""
+    def __init__(self, tab):
+        super().__init__(tab)
+        self.tab = tab
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Wheel and not obj.hasFocus():
+            # Returning True alone would swallow it: hand it to the panel's
+            # scroll area (created later in __init__, hence the lookup here).
+            panel = getattr(self.tab, "panel_scroll", None)
+            if panel is not None:
+                QApplication.sendEvent(panel.viewport(), event)
+            return True
+        return False
+
+
 class _PanelScrollArea(QScrollArea):
     """Scroll area for the Custom Screens side panel. A plain QScrollArea
     asks for very little height, so the window (sized by adjustSize())
@@ -2029,6 +2049,10 @@ class CustomScreensTab(QWidget):
         for value, label in FONT_SIZE_CHOICES:
             self.font_size_combo.addItem(label, value)
         panel_layout.addWidget(self.font_size_combo)
+        self._wheel_guard = _WheelOnlyWhenFocused(self)
+        for combo in (self.sensor_combo, self.style_combo, self.font_size_combo):
+            combo.setFocusPolicy(Qt.StrongFocus)
+            combo.installEventFilter(self._wheel_guard)
         self.on_style_changed()  # style_combo starts on "Number" -- sync Large/Huge availability now
 
         self.bar_hint_label = QLabel(
@@ -2735,6 +2759,9 @@ class CustomScreensTab(QWidget):
         self._elements_scroll_to_end = bool(prev and prev[0] == shown[0] and shown[1] > prev[1])
         if self._elements_scroll_to_end:
             bar.setValue(bar.maximum())
+            # if the list doesn't overflow, rangeChanged never fires: don't
+            # leave the flag set for some later resize to act on
+            QTimer.singleShot(300, lambda: setattr(self, "_elements_scroll_to_end", False))
         elif prev and prev[0] != shown[0]:
             bar.setValue(0)
         # Recovery-button visibility: rough estimate (not pixel-perfect

@@ -100,15 +100,15 @@ device they belong to, so the key doesn't depend on boot order:
 | --- | --- |
 | two NVMe drives | `t.nvme@nvme0/temp1`, `t.nvme@nvme1/temp1` |
 | two AMD cards | `rpm.amdgpu@0000:03:00.0/fan1` |
-| NVIDIA card | `t.nvidia@00000000:01:00.0/temp1` |
+| NVIDIA card | `t.nvidia@0000:01:00.0/temp1` |
 | the only AMD card | `rpm.amdgpu/fan1` (no `@…`) |
 
 > Adding a second identical device (another NVMe, another GPU) renames the
 > existing one's key from `nvme/…` to `nvme@nvme0/…`. An element using the
 > old key then shows `N/A`. Pick it again from the dropdown.
 
-`src/g510_lcd_stats --sensors` and `fanpilotctl sensors` both list the keys
-your PC has right now.
+`src/g510_lcd_stats --sensors` lists the keys your PC has right now.
+(`fanpilotctl sensors` shows FanPilot's names and values, but not the keys.)
 
 ## Short labels on the LCD
 
