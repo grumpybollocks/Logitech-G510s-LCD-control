@@ -1696,12 +1696,16 @@ static const sensor_def_t SENSORS[] = {
    can't see itself. Format (tab-separated, one header line):
        # fanpilot-sensors 1 <unix-time>
        <key> <kind: temp|rpm|pct> <short label, <=4 chars> <long label> <value or empty>
-   A custom-screen element uses it as sensor=FP:<key>. Missing file, wrong
+   A custom-screen element uses it as sensor=FP:<key>. Full reference:
+   docs/FANPILOT_SENSORS.md. Limits (2026-11-16, made roomy for any PC): up to
+   FP_MAX rows -- FanPilot writes temperatures first and fans last, so a PC
+   with many drives/DIMMs/GPUs must never lose its fan rows to a small cap --
+   lines up to 511 bytes, keys up to 47 bytes, short labels cut to 4 chars. Missing file, wrong
    version or a timestamp older than FP_MAX_AGE (FanPilot stopped) -> "N/A";
    nothing here ever blocks or fails hard, so without FanPilot the LCD behaves
    exactly as before. Read at most once per second (the file is on tmpfs). */
 static const char *g_fanpilot_path = "/run/fanpilot/sensors.tsv"; /* tests point this elsewhere */
-#define FP_MAX 64
+#define FP_MAX 256
 #define FP_MAX_AGE 15  /* FanPilot rewrites every tick; its interval may be set up to 5 s */
 typedef struct {
     char key[48];
@@ -1731,7 +1735,7 @@ static void fanpilot_load(int force) {
     g_fp_count = 0;
     FILE *f = fopen(g_fanpilot_path, "r");
     if (!f) return;
-    char line[256];
+    char line[512];
     int version = 0;
     long long stamp = 0;
     if (!fgets(line, sizeof(line), f)
@@ -1770,7 +1774,8 @@ static void fanpilot_load(int force) {
         fp_row_t *r = &g_fp[g_fp_count];
         fp_copy(r->key, sizeof(r->key), field[0], ends[0]);
         fp_copy(r->kind, sizeof(r->kind), field[1], ends[1]);
-        fp_copy(r->shortl, sizeof(r->shortl), field[2], ends[2]);
+        /* the LCD has room for a 4-character label (FanPilot never writes more) */
+        fp_copy(r->shortl, 5, field[2], ends[2]);
         fp_copy(r->label, sizeof(r->label), field[3], ends[3]);
         char val[32];
         fp_copy(val, sizeof(val), field[4], ends[4]);
