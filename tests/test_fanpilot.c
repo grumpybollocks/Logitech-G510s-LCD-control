@@ -213,6 +213,23 @@ int main(void) {
         CHECK(strcmp(d, "1500") == 0, "400-byte long label: line still read (got '%s')", d);
         const sensor_def_t *ld = find_sensor("FP:t.k10temp/temp1");
         CHECK(ld && strcmp(ld->label, "TOOL") == 0, "short label cut to 4 characters (got '%s')", ld ? ld->label : "?");
+
+        /* review 2026-11-16: cut after 4 UTF-8 characters, never inside one */
+        write_snapshot(now, "t.u/temp1\ttemp\tab\xE2\x82\xAC" "d\xE2\x82\xAC\tu\t30\n");
+        ld = find_sensor("FP:t.u/temp1");
+        CHECK(ld && strcmp(ld->label, "ab\xE2\x82\xAC" "d") == 0, "UTF-8 short label: 4 whole characters");
+
+        /* CRLF: 510 content bytes + \r doesn't fit, 509 + \r does (the app agrees) */
+        {
+            static char crlf[2048];
+            char pad[520];
+            int base = (int)strlen("t.c1/temp1\ttemp\tC\t\t30");
+            memset(pad, 'p', 510 - base); pad[510 - base] = 0;
+            snprintf(crlf, sizeof crlf, "t.c1/temp1\ttemp\tC\t%s\t30\r\nt.c2/temp1\ttemp\tC\t%s\t30\r\n", pad, pad + 1);
+            write_snapshot(now, crlf);
+            CHECK(fanpilot_index("t.c1/temp1") < 0 && fanpilot_index("t.c2/temp1") >= 0,
+                  "CRLF line: 510 bytes + \\r dropped, 509 + \\r kept");
+        }
     }
 
     /* --- reads at most once per second --- */

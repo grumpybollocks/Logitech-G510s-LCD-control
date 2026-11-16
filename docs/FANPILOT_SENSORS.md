@@ -184,7 +184,7 @@ fan:
 | Limit | Value | Why |
 | --- | --- | --- |
 | rows | 256 | FanPilot lists temperatures first and fans last. A PC with many drives, DIMMs and GPUs must never lose its fan rows. |
-| line length | 511 bytes | room for long custom names you gave fans in FanPilot |
+| line length | 510 bytes plus the newline (CRLF: the `\r` counts) | room for long custom names you gave fans in FanPilot |
 | key length | 47 bytes | longer keys are skipped, never cut short (a cut key could match the wrong sensor) |
 | short label | 4 characters | longer ones are cut to 4 |
 | staleness | 15 s | FanPilot's slowest setting is a 5 s tick |

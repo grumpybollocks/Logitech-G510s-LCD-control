@@ -1700,7 +1700,8 @@ static const sensor_def_t SENSORS[] = {
    docs/FANPILOT_SENSORS.md. Limits (2026-11-16, made roomy for any PC): up to
    FP_MAX rows -- FanPilot writes temperatures first and fans last, so a PC
    with many drives/DIMMs/GPUs must never lose its fan rows to a small cap --
-   lines up to 511 bytes, keys up to 47 bytes, short labels cut to 4 chars. Missing file, wrong
+   lines up to 510 bytes plus the newline (a CRLF's \r counts), keys up to
+   47 bytes, short labels cut to 4 characters. Missing file, wrong
    version or a timestamp older than FP_MAX_AGE (FanPilot stopped) -> "N/A";
    nothing here ever blocks or fails hard, so without FanPilot the LCD behaves
    exactly as before. Read at most once per second (the file is on tmpfs). */
@@ -1710,7 +1711,7 @@ static const char *g_fanpilot_path = "/run/fanpilot/sensors.tsv"; /* tests point
 typedef struct {
     char key[48];
     char kind[8];
-    char shortl[8];
+    char shortl[20];   /* 4 characters, up to 4 bytes each in UTF-8 */
     char label[64];
     double value;
     int has_value;
@@ -1774,8 +1775,21 @@ static void fanpilot_load(int force) {
         fp_row_t *r = &g_fp[g_fp_count];
         fp_copy(r->key, sizeof(r->key), field[0], ends[0]);
         fp_copy(r->kind, sizeof(r->kind), field[1], ends[1]);
-        /* the LCD has room for a 4-character label (FanPilot never writes more) */
-        fp_copy(r->shortl, 5, field[2], ends[2]);
+        /* the LCD has room for a 4-character label (FanPilot never writes more).
+           Cut after 4 UTF-8 characters, never inside one -- the app cuts the
+           same way (Python str[:4]). */
+        {
+            const char *e = field[2];
+            int chars = 0;
+            while (e < ends[2]) {
+                if (((unsigned char)*e & 0xC0) != 0x80) {   /* first byte of a character */
+                    if (chars == 4) break;
+                    chars++;
+                }
+                e++;
+            }
+            fp_copy(r->shortl, sizeof(r->shortl), field[2], e);
+        }
         fp_copy(r->label, sizeof(r->label), field[3], ends[3]);
         char val[32];
         fp_copy(val, sizeof(val), field[4], ends[4]);
